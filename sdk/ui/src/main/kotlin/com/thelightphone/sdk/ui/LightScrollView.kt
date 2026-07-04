@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -50,9 +51,9 @@ enum class LightScrollBarPosition {
 fun LightScrollView(
     modifier: Modifier = Modifier,
     scrollBarPosition: LightScrollBarPosition = LightScrollBarPosition.Outside,
+    scrollState: ScrollState = rememberScrollState(),
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
     val showScrollBar = scrollState.maxValue > 0
     val contentPaddingEnd = when {

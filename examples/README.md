@@ -5,6 +5,7 @@
 | `ui-demo` | `com.thelightphone.uidemo` | UI toolkit gallery: theme, icons, scroll, text input, modal |
 | `weather` | `com.thelightphone.weather` | weather tool via Open-Meteo API |
 | `authenticator` | `com.thelightphone.authenticator` | 2FA authenticator
+| `zulip` | `com.thelightphone.zulip` | Zulip chat client with multi-realm support
 
 ## How to run on device
 
@@ -17,5 +18,8 @@ adb shell am start -n com.thelightphone.weather/com.thelightphone.sdk.LightActiv
 
 ./gradlew :examples:authenticator:installDebug
 adb shell am start -n com.thelightphone.authenticator/com.thelightphone.sdk.LightActivity
+
+./gradlew :examples:zulip:installDebug
+adb shell am start -n com.thelightphone.zulip/com.thelightphone.sdk.LightActivity
 ```
 
