@@ -88,6 +88,15 @@ data class SendMessageResponse(
 )
 
 @Serializable
+data class UploadFileResponse(
+    val result: String,
+    val uri: String = "",
+    val url: String = "",
+    val filename: String = "",
+    val msg: String = "",
+)
+
+@Serializable
 data class StreamTopicsResponse(
     val result: String,
     val topics: List<ZulipTopic> = emptyList(),

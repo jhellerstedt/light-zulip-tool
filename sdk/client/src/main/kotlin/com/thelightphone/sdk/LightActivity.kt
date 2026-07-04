@@ -1,7 +1,9 @@
 package com.thelightphone.sdk
 
 import android.content.Context
+import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
@@ -135,6 +137,32 @@ class SealedLightContext(internal val androidContext: Context) {
     val dataStore: DataStore<Preferences> by lazy{ androidContext.dataStore }
     val filesDir: File by lazy{ androidContext.filesDir }
     val fileShare: LightFileShare by lazy { LightFileShare(androidContext) }
+
+    fun getContentMimeType(uri: Uri): String? = androidContext.contentResolver.getType(uri)
+
+    fun getContentDisplayName(uri: Uri): String? {
+        val cursor = androidContext.contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        ) ?: return null
+        cursor.use {
+            if (!it.moveToFirst()) return null
+            val columnIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (columnIndex < 0) return null
+            return it.getString(columnIndex)
+        }
+    }
+
+    fun copyUriToFile(uri: Uri, targetFile: File): Boolean {
+        val input = androidContext.contentResolver.openInputStream(uri) ?: return false
+        input.use { source ->
+            targetFile.outputStream().use { output -> source.copyTo(output) }
+        }
+        return true
+    }
 }
 /**
  * Wrapper class to pass around an instance of LightActivity without exposing it to
