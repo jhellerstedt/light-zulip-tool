@@ -17,6 +17,8 @@ import com.thelightphone.zulip.util.stripHtml
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -49,6 +51,9 @@ class ZulipStore(
     private val _recentDirectMessages = MutableStateFlow<List<DirectMessageConversation>>(emptyList())
     val recentDirectMessages: StateFlow<List<DirectMessageConversation>> = _recentDirectMessages.asStateFlow()
 
+    private val _selectableUsers = MutableStateFlow<List<ZulipUser>>(emptyList())
+    val selectableUsersFlow: StateFlow<List<ZulipUser>> = _selectableUsers.asStateFlow()
+
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
@@ -69,15 +74,18 @@ class ZulipStore(
         eventRequestTimeoutMillis = response.eventRequestTimeoutMillis()
         queueId = response.queueId
         lastEventId = response.lastEventId
+        streams.clear()
         response.subscriptions.forEach { stream ->
             streams[stream.streamId] = stream
         }
+        users.clear()
         response.realmUsers.forEach { user ->
             users[user.userId] = user
         }
         syncRecentDirectMessages(response.recentPrivateConversations)
         response.messages.forEach { addMessage(it) }
         rebuildUnreadFromSnapshot(response.unreadMsgs)
+        publishSelectableUsers()
         _streamsList.value = streams.values.sortedBy { it.name.lowercase() }
         rebuildInbox()
     }
@@ -108,6 +116,9 @@ class ZulipStore(
                         markMessageReadLocally(messageId)
                     }
                 }
+            }
+            "realm_user" -> {
+                handleRealmUserEvent(event)
             }
             "heartbeat" -> Unit
         }
@@ -154,9 +165,7 @@ class ZulipStore(
 
     fun userNames(): Map<Int, String> = users.mapValues { it.value.fullName }
 
-    fun selectableUsers(): List<ZulipUser> = users.values
-        .filter { it.userId != account.userId }
-        .sortedBy { it.fullName.lowercase() }
+    fun selectableUsers(): List<ZulipUser> = selectableUsersFlow.value
 
     fun clearError() {
         _error.value = null
@@ -168,7 +177,61 @@ class ZulipStore(
 
     fun updateAccountMetadata(account: StoredZulipAccount) {
         this.account = account
+        publishSelectableUsers()
     }
+
+    private fun publishSelectableUsers() {
+        _selectableUsers.value = users.values
+            .filter { it.userId != account.userId && it.isActive }
+            .sortedBy { it.fullName.lowercase() }
+    }
+
+    private fun handleRealmUserEvent(event: com.thelightphone.zulip.api.models.ZulipEvent) {
+        val person = event.person?.jsonObject ?: return
+        val userId = person["user_id"]?.jsonPrimitive?.intOrNull ?: return
+        when (event.op) {
+            "add" -> {
+                users[userId] = mergeRealmUserEventPerson(
+                    existing = users[userId],
+                    userId = userId,
+                    person = person,
+                )
+                publishSelectableUsers()
+            }
+            "update" -> {
+                val existing = users[userId]
+                if (existing != null || person.containsKey("full_name") || person.containsKey("email") || person.containsKey("is_active")) {
+                    users[userId] = mergeRealmUserEventPerson(
+                        existing = existing,
+                        userId = userId,
+                        person = person,
+                    )
+                    publishSelectableUsers()
+                }
+            }
+            "remove" -> {
+                users.remove(userId)
+                publishSelectableUsers()
+            }
+        }
+    }
+
+    private fun mergeRealmUserEventPerson(
+        existing: ZulipUser?,
+        userId: Int,
+        person: Map<String, kotlinx.serialization.json.JsonElement>,
+    ): ZulipUser = ZulipUser(
+        userId = userId,
+        fullName = person["full_name"]?.jsonPrimitive?.contentOrNull
+            ?: existing?.fullName
+            ?: "User $userId",
+        email = person["email"]?.jsonPrimitive?.contentOrNull
+            ?: existing?.email
+            .orEmpty(),
+        isActive = person["is_active"]?.jsonPrimitive?.booleanOrNull
+            ?: existing?.isActive
+            ?: true,
+    )
 
     private fun addMessage(message: ZulipMessage) {
         val narrow = narrowForMessage(message) ?: return

@@ -113,6 +113,7 @@ data class ZulipUser(
     @SerialName("user_id") val userId: Int,
     @SerialName("full_name") val fullName: String,
     val email: String = "",
+    @SerialName("is_active") val isActive: Boolean = true,
 )
 
 @Serializable
@@ -176,6 +177,7 @@ data class ZulipEvent(
     val id: Int = -1,
     val message: ZulipMessage? = null,
     val messages: List<Int>? = null,
+    val person: JsonElement? = null,
     val operation: String? = null,
     val flag: String? = null,
     val subscriptions: List<ZulipStream>? = null,

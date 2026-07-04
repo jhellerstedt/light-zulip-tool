@@ -1,7 +1,10 @@
 package com.thelightphone.zulip.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.delete
 import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -20,7 +24,6 @@ import com.thelightphone.lp3Keyboard.ui.CapsLockedLayout
 import com.thelightphone.lp3Keyboard.ui.DefaultLp3KeyboardViewModel
 import com.thelightphone.lp3Keyboard.ui.EmojiLayout
 import com.thelightphone.lp3Keyboard.ui.ExtendedCharKeyboard
-import com.thelightphone.lp3Keyboard.ui.KeyboardOptions
 import com.thelightphone.lp3Keyboard.ui.LayoutOptions
 import com.thelightphone.lp3Keyboard.ui.LowerCaseLayout
 import com.thelightphone.lp3Keyboard.ui.Lp3KeyboardViewModel
@@ -49,7 +52,6 @@ import com.thelightphone.sdk.ui.keyboard.LightEmbeddedLp3Keyboard
 import com.thelightphone.sdk.ui.lightClickable
 import com.thelightphone.zulip.ZulipServices
 import com.thelightphone.zulip.store.Narrow
-import kotlinx.coroutines.flow.StateFlow
 
 private const val UNDERLINE_THICKNESS_PX = 3f
 private const val UNDERLINE_WIDTH_FRACTION = 0.8f
@@ -67,7 +69,7 @@ class ChooseParticipantsScreen(sealedActivity: SealedLightActivity) :
     override fun Content() {
         val themeColors by LightThemeController.colors.collectAsState()
         val state by viewModel.uiState.collectAsState()
-        val queryState = rememberTextFieldState("")
+        val queryState = rememberTextFieldState(state.query)
         val keyboardOptionsFlow = rememberKeyboardOptions()
         val keyboardCallback = remember(queryState) { ParticipantKeyboardCallback(queryState) }
         val keyboardViewModel: Lp3KeyboardViewModel = remember(keyboardCallback, keyboardOptionsFlow) {
@@ -84,13 +86,34 @@ class ChooseParticipantsScreen(sealedActivity: SealedLightActivity) :
             )
         }
         val usersById = remember(state.users) { state.users.associateBy { it.userId } }
-        val query = queryState.text.toString()
+        val badges = buildSelectedParticipantBadges(state.selectedUserIds, usersById)
         val suggestions = filterParticipantSuggestions(
             users = state.users,
-            query = query,
+            query = state.query,
             selectedUserIds = state.selectedUserIds.toSet(),
+            recentUserIds = state.recentUserIds,
         )
-        val selectedSummary = buildParticipantSummary(state.selectedUserIds, usersById)
+        val placeholder = when {
+            state.users.isEmpty() -> "No realm users available"
+            suggestions.isEmpty() -> "No matches"
+            else -> null
+        }
+
+        LaunchedEffect(state.query) {
+            if (queryState.text.toString() != state.query) {
+                queryState.edit {
+                    replace(0, length, state.query)
+                    selection = TextRange(state.query.length)
+                }
+            }
+        }
+
+        LaunchedEffect(queryState.text.toString()) {
+            val query = queryState.text.toString()
+            if (query != state.query) {
+                viewModel.updateQuery(query)
+            }
+        }
 
         LightTheme(colors = themeColors) {
             Column(
@@ -106,23 +129,13 @@ class ChooseParticipantsScreen(sealedActivity: SealedLightActivity) :
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .lightClickable { viewModel.activateInput() }
                         .padding(horizontal = 1f.gridUnitsAsDp()),
                 ) {
-                    if (state.selectedUserIds.isNotEmpty()) {
-                        LightText(text = "To", variant = LightTextVariant.Detail)
-                        LightText(
-                            text = selectedSummary,
-                            variant = LightTextVariant.Copy,
-                            modifier = Modifier.padding(top = 0.25f.gridUnitsAsDp()),
-                        )
-                        Spacer(modifier = Modifier.height(1f.gridUnitsAsDp()))
-                    }
-
-                    LightText(text = "Search", variant = LightTextVariant.Detail)
-                    LightText(
-                        text = if (query.isBlank()) "Type a name or email" else query,
-                        variant = LightTextVariant.Copy,
-                        modifier = Modifier.padding(top = 0.25f.gridUnitsAsDp()),
+                    ParticipantInputRow(
+                        badges = badges,
+                        query = state.query,
+                        onBadgeClick = viewModel::removeParticipant,
                     )
                     Spacer(modifier = Modifier.height(0.5f.gridUnitsAsDp()))
                     Spacer(
@@ -139,11 +152,6 @@ class ChooseParticipantsScreen(sealedActivity: SealedLightActivity) :
                         .fillMaxWidth()
                         .padding(horizontal = 1f.gridUnitsAsDp()),
                 ) {
-                    val placeholder = participantSuggestionsPlaceholder(
-                        users = state.users,
-                        query = query,
-                        selectedUserIds = state.selectedUserIds,
-                    )
                     when {
                         placeholder != null -> {
                             LightText(
@@ -159,7 +167,6 @@ class ChooseParticipantsScreen(sealedActivity: SealedLightActivity) :
                                         .fillMaxWidth()
                                         .lightClickable {
                                             viewModel.addParticipant(user.userId)
-                                            clearQuery(queryState)
                                         }
                                         .padding(vertical = 0.75f.gridUnitsAsDp()),
                                 ) {
@@ -177,7 +184,9 @@ class ChooseParticipantsScreen(sealedActivity: SealedLightActivity) :
                     }
                 }
 
-                LightEmbeddedLp3Keyboard(viewModel = keyboardViewModel)
+                if (state.isKeyboardVisible) {
+                    LightEmbeddedLp3Keyboard(viewModel = keyboardViewModel)
+                }
 
                 LightBottomBar(
                     items = listOf(
@@ -186,13 +195,18 @@ class ChooseParticipantsScreen(sealedActivity: SealedLightActivity) :
                             onClick = { goBack() },
                             contentDescription = "Back",
                         ),
-                        if (state.selectedUserIds.isEmpty()) {
-                            null
-                        } else {
+                        when {
+                            state.isKeyboardVisible -> LightBarButton.Text(
+                                text = "HIDE",
+                                onClick = viewModel::hideKeyboard,
+                            )
+                            state.selectedUserIds.isNotEmpty() -> {
                             LightBarButton.Text(
                                 text = "CLEAR",
                                 onClick = viewModel::clearParticipants,
                             )
+                            }
+                            else -> null
                         },
                         if (state.selectedUserIds.isEmpty()) {
                             null
@@ -215,10 +229,33 @@ class ChooseParticipantsScreen(sealedActivity: SealedLightActivity) :
     }
 }
 
-private fun clearQuery(state: TextFieldState) {
-    state.edit {
-        delete(0, length)
-        selection = TextRange.Zero
+@Composable
+private fun ParticipantInputRow(
+    badges: List<SelectedParticipantBadge>,
+    query: String,
+    onBadgeClick: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    FlowRow(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(0.5f.gridUnitsAsDp()),
+        verticalArrangement = Arrangement.spacedBy(0.25f.gridUnitsAsDp()),
+    ) {
+        LightText(
+            text = "To:",
+            variant = LightTextVariant.Detail,
+        )
+        badges.forEach { badge ->
+            LightText(
+                text = badge.initials,
+                variant = LightTextVariant.Heading,
+                modifier = Modifier.lightClickable { onBadgeClick(badge.userId) },
+            )
+        }
+        LightText(
+            text = if (query.isBlank()) "Type a name or email" else query,
+            variant = LightTextVariant.Copy,
+        )
     }
 }
 
@@ -239,7 +276,7 @@ private class ParticipantKeyboardCallback(
     override fun onSpecialKeyReleased(key: SpecialKey) {
         when (key) {
             SpecialKey.Backspace -> deleteBeforeCursor()
-            SpecialKey.Return -> insertAtCursor("\n")
+            SpecialKey.Return -> Unit
             else -> Unit
         }
     }
@@ -260,8 +297,8 @@ private class ParticipantKeyboardCallback(
         insertAtCursor(buildString { appendCodePoint(code) })
     }
 
-    override fun onSpecialKeyRepeated(key: SpecialKey) {
-        if (key == SpecialKey.Space) insertAtCursor(" ")
+    override fun onSpecialKeyRepeated(specialKey: SpecialKey) {
+        if (specialKey == SpecialKey.Space) insertAtCursor(" ")
     }
 
     private fun insertAtCursor(text: String) {
