@@ -8,6 +8,7 @@ import com.thelightphone.zulip.api.models.RegisterQueueResponse
 import com.thelightphone.zulip.api.models.SendMessageResponse
 import com.thelightphone.zulip.api.models.ServerSettingsResponse
 import com.thelightphone.zulip.api.models.StreamTopicsResponse
+import com.thelightphone.zulip.api.models.UploadFileResponse
 import com.thelightphone.zulip.store.Narrow
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -143,6 +144,22 @@ suspend fun sendMessage(
         )
     }
     val body = client.post("messages", formParams = formParams)
+    return json.decodeFromString(body)
+}
+
+suspend fun uploadFile(
+    client: ZulipClient,
+    fileName: String,
+    mimeType: String,
+    bytes: ByteArray,
+): UploadFileResponse {
+    val body = client.postMultipart(
+        path = "user_uploads",
+        fileFieldName = "filename",
+        fileName = fileName,
+        mimeType = mimeType,
+        bytes = bytes,
+    )
     return json.decodeFromString(body)
 }
 

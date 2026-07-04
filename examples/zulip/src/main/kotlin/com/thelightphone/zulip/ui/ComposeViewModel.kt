@@ -4,6 +4,7 @@ import androidx.lifecycle.viewModelScope
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.zulip.store.GlobalStore
 import com.thelightphone.zulip.store.Narrow
+import com.thelightphone.zulip.store.PendingUploadAttachment
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -11,10 +12,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 data class ComposeUiState(
     val title: String = "Compose",
     val editorSession: Int = 0,
+    val attachments: List<ComposeAttachmentDraft> = emptyList(),
+    val isSending: Boolean = false,
     val sent: Boolean = false,
     val errorMessage: String? = null,
 )
@@ -40,9 +44,14 @@ class ComposeViewModel(
         }
     }
 
+    fun replaceAttachments(attachments: List<ComposeAttachmentDraft>) {
+        _uiState.update { it.copy(attachments = attachments) }
+    }
+
     fun sendMessage(content: String) {
         val trimmed = content.trim()
-        if (trimmed.isBlank()) {
+        val attachments = _uiState.value.attachments.sortedBy { it.sourceIndex }
+        if (trimmed.isBlank() && attachments.isEmpty()) {
             _uiState.update { it.copy(errorMessage = "Message cannot be empty") }
             return
         }
@@ -51,17 +60,35 @@ class ComposeViewModel(
             _uiState.update { it.copy(errorMessage = "No active account") }
             return
         }
+        _uiState.update { it.copy(isSending = true, errorMessage = null) }
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
-                store.send(narrow, trimmed)
+                store.send(
+                    narrow = narrow,
+                    content = trimmed,
+                    attachments = attachments.map { attachment ->
+                        PendingUploadAttachment(
+                            displayName = attachment.displayName,
+                            mimeType = attachment.mimeType,
+                            file = File(attachment.filePath),
+                        )
+                    },
+                )
             }.onSuccess {
-                _uiState.update { it.copy(sent = true) }
+                _uiState.update { it.copy(isSending = false, sent = true) }
             }.onFailure { error ->
                 _uiState.update {
-                    it.copy(errorMessage = error.message ?: "Failed to send message")
+                    it.copy(
+                        isSending = false,
+                        errorMessage = error.message ?: "Failed to send message",
+                    )
                 }
             }
         }
+    }
+
+    fun showError(message: String) {
+        _uiState.update { it.copy(errorMessage = message) }
     }
 
     fun consumeSent() {

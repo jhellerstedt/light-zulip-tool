@@ -7,12 +7,15 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.basicAuth
 import io.ktor.client.request.forms.FormDataContent
+import io.ktor.client.request.forms.MultiPartFormDataContent
+import io.ktor.client.request.forms.formData
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.Parameters
 import io.ktor.http.contentType
@@ -89,6 +92,42 @@ class ZulipClient(
             setBody(FormDataContent(Parameters.build {
                 formParams.forEach { (key, value) -> append(key, value) }
             }))
+        }
+        return parseResponse(response.status.value, response.bodyAsText())
+    }
+
+    suspend fun postMultipart(
+        path: String,
+        fileFieldName: String,
+        fileName: String,
+        mimeType: String,
+        bytes: ByteArray,
+        authenticated: Boolean = isAuthenticated,
+    ): String {
+        val response = client.post("$apiBase/$path") {
+            if (authenticated) {
+                requireNotNull(email)
+                requireNotNull(apiKey)
+                basicAuth(email, apiKey)
+            }
+            header(HttpHeaders.UserAgent, USER_AGENT)
+            setBody(
+                MultiPartFormDataContent(
+                    formData {
+                        append(
+                            key = fileFieldName,
+                            value = bytes,
+                            headers = Headers.build {
+                                append(HttpHeaders.ContentType, mimeType)
+                                append(
+                                    HttpHeaders.ContentDisposition,
+                                    "form-data; name=\"$fileFieldName\"; filename=\"$fileName\"",
+                                )
+                            },
+                        )
+                    },
+                ),
+            )
         }
         return parseResponse(response.status.value, response.bodyAsText())
     }

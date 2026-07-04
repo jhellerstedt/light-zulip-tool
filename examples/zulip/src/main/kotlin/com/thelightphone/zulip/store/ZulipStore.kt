@@ -12,7 +12,10 @@ import com.thelightphone.zulip.api.routes.getStreamTopics
 import com.thelightphone.zulip.api.routes.markMessagesRead
 import com.thelightphone.zulip.api.routes.registerQueue
 import com.thelightphone.zulip.api.routes.sendMessage
+import com.thelightphone.zulip.api.routes.uploadFile
 import com.thelightphone.zulip.data.StoredZulipAccount
+import com.thelightphone.zulip.ui.UploadedAttachmentLink
+import com.thelightphone.zulip.ui.buildComposeMessageBody
 import com.thelightphone.zulip.util.stripHtml
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,6 +24,13 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.io.File
+
+data class PendingUploadAttachment(
+    val displayName: String,
+    val mimeType: String,
+    val file: File,
+)
 
 class ZulipStore(
     account: StoredZulipAccount,
@@ -126,8 +136,30 @@ class ZulipStore(
         getStreamTopics(client, streamId).topics.sortedByDescending { it.maxId }
     }
 
-    suspend fun send(narrow: Narrow, content: String): Result<Int> = runCatching {
-        val response = sendMessage(client, narrow, content)
+    suspend fun send(
+        narrow: Narrow,
+        content: String,
+        attachments: List<PendingUploadAttachment> = emptyList(),
+    ): Result<Int> = runCatching {
+        val finalContent = if (attachments.isEmpty()) {
+            content
+        } else {
+            val uploadedLinks = attachments.map { attachment ->
+                require(attachment.file.isFile) { "Selected photo is no longer available" }
+                val response = uploadFile(
+                    client = client,
+                    fileName = attachment.displayName,
+                    mimeType = attachment.mimeType,
+                    bytes = attachment.file.readBytes(),
+                )
+                UploadedAttachmentLink(
+                    displayName = response.filename.ifBlank { attachment.displayName },
+                    url = response.url.ifBlank { response.uri },
+                )
+            }
+            buildComposeMessageBody(content, uploadedLinks)
+        }
+        val response = sendMessage(client, narrow, finalContent)
         response.id
     }
 
