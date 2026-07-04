@@ -60,9 +60,11 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.zulip.ZulipServices
+import com.thelightphone.zulip.api.models.ZulipUser
 import com.thelightphone.zulip.store.Narrow
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.keyboard.LightEmbeddedLp3Keyboard
+import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.StateFlow
 
 class ComposeScreen(
@@ -85,6 +87,16 @@ class ComposeScreen(
         val themeColors by LightThemeController.colors.collectAsState()
         val state by viewModel.uiState.collectAsState()
         val textFieldState = rememberTextFieldState("")
+        var mentionTokens by remember { mutableStateOf(emptyList<ComposeMentionToken>()) }
+        val editorText = textFieldState.text.toString()
+        val activeMention = remember(editorText, textFieldState.selection) {
+            findActiveMentionQuery(editorText, textFieldState.selection)
+        }
+        val mentionSuggestions = remember(state.mentionableUsers, activeMention) {
+            activeMention?.let { query ->
+                filterMentionSuggestions(users = state.mentionableUsers, query = query.query)
+            }.orEmpty()
+        }
         val keyboardOptionsFlow = rememberKeyboardOptions()
 
         LaunchedEffect(state.sent) {
@@ -108,6 +120,23 @@ class ComposeScreen(
                 viewModel.replaceAttachments(drafts)
             }.onFailure { error ->
                 viewModel.showError(error.message ?: "Failed to load selected photos")
+            }
+        }
+
+        fun applyMentionSelection(user: ZulipUser) {
+            val query = activeMention ?: return
+            val accountId = state.mentionTokenAccountId ?: return
+            val result = insertMention(
+                text = editorText,
+                activeQuery = query,
+                accountId = accountId,
+                user = user,
+                tokens = mentionTokens,
+            )
+            mentionTokens = result.tokens
+            textFieldState.edit {
+                replace(0, length, result.updatedText)
+                selection = result.selection
             }
         }
 
@@ -148,10 +177,26 @@ class ComposeScreen(
                             .fillMaxWidth(),
                     )
 
+                    if (activeMention != null) {
+                        MentionSuggestions(
+                            query = activeMention.query,
+                            suggestions = mentionSuggestions,
+                            onSuggestionSelected = ::applyMentionSelection,
+                        )
+                    }
+
                     ComposeKeyboard(
                         editorKey = state.editorSession,
                         keyboardOptionsFlow = keyboardOptionsFlow,
                         textFieldState = textFieldState,
+                        onEdit = { start, endExclusive, insertedText ->
+                            mentionTokens = applyTextEditToMentionTokens(
+                                tokens = mentionTokens,
+                                start = start,
+                                endExclusive = endExclusive,
+                                insertedText = insertedText,
+                            )
+                        },
                     )
 
                     LightBottomBar(
@@ -180,7 +225,15 @@ class ComposeScreen(
                                 onClick = if (state.isSending) {
                                     null
                                 } else {
-                                    { viewModel.sendMessage(textFieldState.text.toString()) }
+                                    {
+                                        viewModel.sendMessage(
+                                            formatMessageWithMentions(
+                                                text = textFieldState.text.toString(),
+                                                tokens = mentionTokens,
+                                                currentAccountId = state.mentionTokenAccountId,
+                                            ),
+                                        )
+                                    }
                                 },
                             ),
                         ),
@@ -192,6 +245,48 @@ class ComposeScreen(
                         message = message,
                         onClose = viewModel::dismissError,
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MentionSuggestions(
+    query: String,
+    suggestions: List<ZulipUser>,
+    onSuggestionSelected: (ZulipUser) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 2f.gridUnitsAsDp())
+            .padding(bottom = 0.5f.gridUnitsAsDp()),
+    ) {
+        if (query.isNotBlank() && suggestions.isEmpty()) {
+            LightText(
+                text = "No matches",
+                variant = LightTextVariant.Detail,
+                lighten = true,
+                modifier = Modifier.padding(vertical = 0.5f.gridUnitsAsDp()),
+            )
+        } else {
+            suggestions.forEach { user ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .lightClickable { onSuggestionSelected(user) }
+                        .padding(vertical = 0.5f.gridUnitsAsDp()),
+                ) {
+                    LightText(text = user.fullName, variant = LightTextVariant.Heading)
+                    if (user.email.isNotBlank()) {
+                        LightText(
+                            text = user.email,
+                            variant = LightTextVariant.Detail,
+                            lighten = true,
+                        )
+                    }
                 }
             }
         }
@@ -251,8 +346,11 @@ private fun ComposeKeyboard(
     editorKey: Int,
     keyboardOptionsFlow: StateFlow<KeyboardOptions>,
     textFieldState: TextFieldState,
+    onEdit: (Int, Int, String) -> Unit,
 ) {
-    val keyboardCallback = remember(textFieldState) { ComposeKeyboardCallback(textFieldState) }
+    val keyboardCallback = remember(textFieldState, onEdit) {
+        ComposeKeyboardCallback(textFieldState, onEdit)
+    }
     val keyboardViewModel: Lp3KeyboardViewModel = remember(editorKey, keyboardCallback, keyboardOptionsFlow) {
         DefaultLp3KeyboardViewModel(
             keyboardCallback,
@@ -278,11 +376,12 @@ private fun composeInputTextStyle() = LightThemeTokens.typography.heading
 
 private class ComposeKeyboardCallback(
     private val state: TextFieldState,
+    private val onEdit: (Int, Int, String) -> Unit,
 ) : Lp3RepeatableKeyboardCallback {
     override fun onKeyPressed(code: Int) = Unit
 
-    override fun onSpecialKeyPressed(key: SpecialKey) {
-        if (key == SpecialKey.Space) insertAtCursor(" ")
+    override fun onSpecialKeyPressed(specialKey: SpecialKey) {
+        if (specialKey == SpecialKey.Space) insertAtCursor(" ")
     }
 
     override fun onKeyReleased(code: Int) {
@@ -313,8 +412,8 @@ private class ComposeKeyboardCallback(
         insertCodePoint(code)
     }
 
-    override fun onSpecialKeyRepeated(key: SpecialKey) {
-        if (key == SpecialKey.Space) insertAtCursor(" ")
+    override fun onSpecialKeyRepeated(specialKey: SpecialKey) {
+        if (specialKey == SpecialKey.Space) insertAtCursor(" ")
     }
 
     private fun insertCodePoint(code: Int) {
@@ -322,9 +421,10 @@ private class ComposeKeyboardCallback(
     }
 
     private fun insertAtCursor(text: String) {
+        val start = state.selection.min
+        val end = state.selection.max
+        onEdit(start, end, text)
         state.edit {
-            val start = selection.min
-            val end = selection.max
             replace(start, end, text)
             selection = TextRange(start + text.length)
         }
@@ -332,10 +432,17 @@ private class ComposeKeyboardCallback(
 
     private fun deleteBeforeCursor(count: Int) {
         if (count <= 0) return
+        val selectionStart = state.selection.min
+        val selectionEnd = state.selection.max
+        val end = selectionEnd
+        val start = if (selectionStart != selectionEnd) {
+            selectionStart
+        } else {
+            if (end == 0) return
+            (end - count).coerceAtLeast(0)
+        }
+        onEdit(start, end, "")
         state.edit {
-            val end = selection.min
-            if (end == 0) return@edit
-            val start = (end - count).coerceAtLeast(0)
             delete(start, end)
             selection = TextRange(start)
         }
