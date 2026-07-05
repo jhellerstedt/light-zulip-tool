@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.thelightphone.lp3Keyboard.ui.CapsLockedLayout
@@ -62,6 +63,7 @@ import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.zulip.ZulipServices
 import com.thelightphone.zulip.api.models.ZulipUser
 import com.thelightphone.zulip.store.Narrow
+import com.thelightphone.sdk.ui.designVerticalPxToSp
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.keyboard.LightEmbeddedLp3Keyboard
 import com.thelightphone.sdk.ui.lightClickable
@@ -94,7 +96,11 @@ class ComposeScreen(
         }
         val mentionSuggestions = remember(state.mentionableUsers, activeMention) {
             activeMention?.let { query ->
-                filterMentionSuggestions(users = state.mentionableUsers, query = query.query)
+                filterMentionSuggestions(
+                    users = state.mentionableUsers,
+                    query = query.query,
+                    limit = 2,
+                )
             }.orEmpty()
         }
         val keyboardOptionsFlow = rememberKeyboardOptions()
@@ -368,11 +374,15 @@ private fun ComposeKeyboard(
 }
 
 @Composable
-private fun composeInputTextStyle() = LightThemeTokens.typography.heading
-    .copy(
+private fun composeInputTextStyle(): TextStyle {
+    val base = LightThemeTokens.typography.detail
+    return base.copy(
         color = LightThemeTokens.colors.content,
         textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
+        fontSize = base.fontSize.value.designVerticalPxToSp(),
+        lineHeight = base.lineHeight.value.designVerticalPxToSp(),
     )
+}
 
 private class ComposeKeyboardCallback(
     private val state: TextFieldState,

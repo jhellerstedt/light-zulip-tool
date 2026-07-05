@@ -47,7 +47,7 @@ fun findActiveMentionQuery(text: CharSequence, selection: TextRange): ActiveMent
 fun filterMentionSuggestions(
     users: List<ZulipUser>,
     query: String,
-    limit: Int = 5,
+    limit: Int = 2,
 ): List<ZulipUser> {
     val normalizedQuery = query.trim().lowercase()
     val sortedUsers = users.sortedBy { it.fullName.lowercase() }

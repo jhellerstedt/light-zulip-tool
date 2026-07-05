@@ -20,6 +20,12 @@ fun shouldDowngradeIdleQueueTimeout(error: Throwable): Boolean {
         apiError.message?.contains("not valid JSON", ignoreCase = true) == true
 }
 
+fun shouldReregisterEventQueue(error: Throwable): Boolean {
+    val apiError = error as? ZulipApiException.ApiError ?: return false
+    if (apiError.code.equals("BAD_EVENT_QUEUE_ID", ignoreCase = true)) return true
+    return apiError.message?.contains("Bad event queue ID", ignoreCase = true) == true
+}
+
 class GlobalStore(
     private val accountRepository: AccountRepository,
 ) {

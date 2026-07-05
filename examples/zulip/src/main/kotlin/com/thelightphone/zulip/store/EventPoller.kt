@@ -46,6 +46,14 @@ class EventPoller(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
+                if (shouldReregisterEventQueue(error)) {
+                    val registerResult = store.register()
+                    if (registerResult.isSuccess) {
+                        store.clearError()
+                        backoffAttempt = 0
+                        continue
+                    }
+                }
                 store.setError(error.message ?: "Failed to sync events")
                 backoffAttempt = min(backoffAttempt + 1, 6)
                 delay(backoffDelayMs(backoffAttempt))
