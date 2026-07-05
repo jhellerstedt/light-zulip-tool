@@ -1,9 +1,8 @@
 [tool]
-id = "com.thelightphone.zulip"
+id = "com.jhellerstedt.zulip"
 label = "Zulip"
 versionCode = 1
 versionName = "1.0"
 permissions = ["android.permission.INTERNET"]
-# change if you run this on the emulator!
-serverPackage = "com.thelightphone.sdk.emulator"
-# serverPackage = "com.lightos"
+serverPackage = "com.lightos"
+# serverPackage = "com.thelightphone.sdk.emulator"
