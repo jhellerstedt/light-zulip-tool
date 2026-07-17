@@ -27,6 +27,7 @@ class ZulipCacheRepository(
     private val nowMillis: () -> Long = System::currentTimeMillis,
 ) {
     suspend fun loadAccount(accountId: Long): CachedAccountSnapshot {
+        prune(accountId)
         val conversations = dao.conversations(accountId)
         return CachedAccountSnapshot(
             streams = dao.streams(accountId).map { it.toZulipStream() },

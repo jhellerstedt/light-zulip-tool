@@ -98,6 +98,35 @@ class ZulipCacheRepositoryTest {
     }
 
     @Test
+    fun loadAccountPrunesExpiredRowsBeforeReturningMessages() = runBlocking {
+        val dao = FakeCacheDao()
+        val repository = ZulipCacheRepository(dao, nowMillis = { now })
+        val accountId = 7L
+        val narrow = Narrow.Channel(4)
+        dao.messageRows += (1..30).map { id ->
+            CachedMessageEntity(accountId, id, narrow.cacheKey(), Json.encodeToString(message(id)), now)
+        }
+        dao.messageRows += CachedMessageEntity(accountId, 99, "stream:5:", "{}", now - 604_800_001L)
+        dao.conversationRows += CachedConversationEntity(
+            accountId,
+            narrow.cacheKey(),
+            "Mobile",
+            0,
+            30,
+            30,
+            now,
+        )
+
+        val snapshot = repository.loadAccount(accountId)
+
+        assertEquals((6..30).toSet(), dao.messageRows.filter { it.narrowKey == narrow.cacheKey() }.map { it.messageId }.toSet())
+        assertTrue(dao.messageRows.none { it.narrowKey == "stream:5:" })
+        assertEquals((6..30).toSet(), snapshot.messagesByNarrow.getValue(narrow).map { it.id }.toSet())
+        assertEquals(now - 604_800_000L, dao.deletedBefore.single())
+        assertTrue(dao.accountIds.all { it == accountId })
+    }
+
+    @Test
     fun pruneDeletesExpiredRowsAndKeepsTwentyFiveNewestMessagesPerNarrow() = runBlocking {
         val dao = FakeCacheDao()
         val repository = ZulipCacheRepository(dao, nowMillis = { now })
