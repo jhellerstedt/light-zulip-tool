@@ -366,8 +366,8 @@ git commit -m "feat: add zulip cache and outbox schema"
 - Create: `examples/zulip/src/test/kotlin/com/jhellerstedt/zulip/ZulipCacheRepositoryTest.kt`
 
 **Interfaces:**
-- Produces: `fun Narrow.cacheKey(): String`.
-- Produces: `fun narrowFromCacheKey(value: String): Narrow?`.
+- Produces: `fun Narrow.cacheKey(): String` using the existing `ZulipStore` narrow-key format.
+- Produces: `fun narrowFromCacheKey(value: String): Narrow?` as the lifted inverse of that format.
 - Produces: `CachedAccountSnapshot`.
 - Produces: `ZulipCacheRepository.loadAccount`, `messages`, `topics`, `replaceRegisterSnapshot`, `replaceMessages`, `replaceTopics`, `applyEvent`, and `prune`.
 
@@ -409,31 +409,23 @@ Repository tests must use a fake `ZulipCacheDao` and fixed clock to verify:
 
 Expected: FAIL with unresolved cache-key and repository symbols.
 
-- [ ] **Step 3: Implement reversible narrow keys**
+- [ ] **Step 3: Lift the existing narrow-key codec into `Narrow.kt`**
 
-Use URL-safe Base64 for topic text so colons and Unicode round-trip:
+Do not invent a new encoding. The spec requires the same format already used privately in `ZulipStore`:
 
 ```kotlin
 fun Narrow.cacheKey(): String = when (this) {
-    is Narrow.Channel -> "channel:$streamId"
-    is Narrow.Topic -> {
-        val encoded = Base64.getUrlEncoder().withoutPadding()
-            .encodeToString(topic.toByteArray(Charsets.UTF_8))
-        "topic:$streamId:$encoded"
-    }
+    is Narrow.Topic -> "stream:$streamId:$topic"
+    is Narrow.Channel -> "stream:$streamId:"
     is Narrow.Dm -> "dm:${userIds.distinct().sorted().joinToString(",")}"
 }
 
 fun narrowFromCacheKey(value: String): Narrow? = when {
-    value.startsWith("channel:") ->
-        value.removePrefix("channel:").toIntOrNull()?.let(Narrow::Channel)
-    value.startsWith("topic:") -> {
-        val parts = value.removePrefix("topic:").split(":", limit = 2)
+    value.startsWith("stream:") -> {
+        val parts = value.removePrefix("stream:").split(":", limit = 2)
         val streamId = parts.getOrNull(0)?.toIntOrNull() ?: return null
-        val topic = runCatching {
-            String(Base64.getUrlDecoder().decode(parts.getOrNull(1).orEmpty()), Charsets.UTF_8)
-        }.getOrNull() ?: return null
-        Narrow.Topic(streamId, topic)
+        val topic = parts.getOrNull(1).orEmpty()
+        if (topic.isEmpty()) Narrow.Channel(streamId) else Narrow.Topic(streamId, topic)
     }
     value.startsWith("dm:") -> {
         val ids = value.removePrefix("dm:").split(",").mapNotNull(String::toIntOrNull).distinct().sorted()
@@ -443,7 +435,7 @@ fun narrowFromCacheKey(value: String): Narrow? = when {
 }
 ```
 
-Add `Narrow.normalized()` and update `ZulipStore` to use `cacheKey()` instead of its private `narrowKey`/`narrowFromKey` copies.
+Add `Narrow.normalized()` for DM user-id ordering, then replace `ZulipStore`'s private `narrowKey`/`narrowFromKey` with these shared helpers.
 
 - [ ] **Step 4: Implement `ZulipCacheRepository`**
 
@@ -512,6 +504,7 @@ git commit -m "feat: add zulip persistent cache repository"
 - Modify: `examples/zulip/src/main/kotlin/com/jhellerstedt/zulip/store/ZulipStore.kt`
 - Modify: `examples/zulip/src/main/kotlin/com/jhellerstedt/zulip/store/EventPoller.kt`
 - Modify: `examples/zulip/src/main/kotlin/com/jhellerstedt/zulip/store/GlobalStore.kt`
+- Modify: `examples/zulip/src/main/kotlin/com/jhellerstedt/zulip/ui/ChooseAccountViewModel.kt`
 
 **Interfaces:**
 - Produces: `ConnectionState { ONLINE, REFRESHING, OFFLINE }`.
@@ -625,7 +618,7 @@ if (hydration.hasCachedState) {
 return store
 ```
 
-This preserves login validation and the actionable initial-load error for accounts without cache, while allowing previously synchronized accounts to open immediately offline.
+This preserves login validation and the actionable initial-load error for accounts without cache, while allowing previously synchronized accounts to open immediately offline. `ChooseAccountViewModel.initialize()` must treat cached account restore as success even when background registration fails.
 
 Change `EventPoller` to call `gateway.events`, apply each event through `coordinator.applyEvent` so both memory and Room are updated, and call `coordinator.register` for stale queue recovery.
 
@@ -655,6 +648,7 @@ git commit -m "feat: hydrate zulip state before network sync"
 **Files:**
 - Modify: `examples/zulip/src/main/kotlin/com/jhellerstedt/zulip/store/ZulipSyncCoordinator.kt`
 - Modify: `examples/zulip/src/main/kotlin/com/jhellerstedt/zulip/store/GlobalStore.kt`
+- Modify: `examples/zulip/src/main/kotlin/com/jhellerstedt/zulip/api/routes/ZulipRoutes.kt`
 - Modify: `examples/zulip/src/main/kotlin/com/jhellerstedt/zulip/ui/MessageListViewModel.kt`
 - Modify: `examples/zulip/src/main/kotlin/com/jhellerstedt/zulip/ui/MessageListScreen.kt`
 - Modify: `examples/zulip/src/main/kotlin/com/jhellerstedt/zulip/ui/TopicListViewModel.kt`
@@ -714,7 +708,7 @@ suspend fun cachedTopics(store: ZulipStore, streamId: Int): List<ZulipTopic>
 suspend fun refreshTopics(store: ZulipStore, streamId: Int): Result<List<ZulipTopic>>
 ```
 
-Refresh methods set `REFRESHING`, persist successful responses before returning them, set `ONLINE` on success, and set `OFFLINE` only for transient transport failures.
+Refresh methods set `REFRESHING`, persist successful responses before returning them, set `ONLINE` on success, and set `OFFLINE` only for transient transport failures. Change `getMessages` refresh calls to request `numBefore = 25` so network fetches match cache retention.
 
 - [ ] **Step 4: Rework ViewModels and screens**
 
@@ -1050,7 +1044,7 @@ val zulipOutboxJob: LightJobHandler = { context, input ->
 }
 ```
 
-Keep the annotated property top-level and typed explicitly as `LightJobHandler` so KSP registers it.
+Keep the annotated property top-level and typed explicitly as `LightJobHandler` so KSP registers it. `LightWork.enqueue` uses `ExistingWorkPolicy.REPLACE`, so a re-enqueue can cancel in-flight work; rely on `SENDING -> QUEUED` recovery and attachment URL checkpoints rather than assuming a single uninterrupted run.
 
 - [ ] **Step 4: Refactor `ZulipServices` around one database**
 
@@ -1308,6 +1302,14 @@ git commit -m "test: verify zulip offline cache and outbox"
 If no files changed, do not create an empty commit.
 
 ---
+
+## Implementation Risks
+
+- `buildDatabase` must gain migration support before schema work can ship; tools cannot call `Room.databaseBuilder` directly because `android.content.Context` is blocked outside the SDK helper.
+- `LightWork` unique work always uses `REPLACE`, so outbox processing must recover safely from cancellation.
+- `ZulipClient` currently drops HTTP status codes; failure classification depends on the Task 6 exception changes.
+- `LightFullscreenModal` is dismiss-only, so permanent outbox failures need a local retry/discard overlay.
+- `StreamListViewModel` and `DirectMessageListViewModel` should be smoke-tested in Task 9 to ensure cache hydration does not introduce empty flashes.
 
 ## Self-Review
 
