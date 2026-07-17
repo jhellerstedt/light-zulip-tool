@@ -102,7 +102,7 @@ Each message row stores:
 - the serialized message fields required to reconstruct `ZulipMessage`
 - received or refreshed timestamp
 
-The `(account_id, message_id)` pair is unique. A message may be projected into the appropriate narrow using its stored narrow key.
+The `(account_id, narrow_key, message_id)` tuple is unique. This allows one Zulip message to be cached in both a channel view and its topic view without one snapshot overwriting the other.
 
 ### Pending messages
 
