@@ -81,3 +81,17 @@ Observed result: `BUILD SUCCESSFUL`; one test ran and finished on `light_phone_3
 - `./gradlew :examples:zulip:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.jhellerstedt.zulip.ZulipDatabaseMigrationTest` — `BUILD SUCCESSFUL in 17s`; one migration test completed on `light_phone_3(AVD) - 14`.
 - `./gradlew :examples:zulip:testDebugUnitTest` — `BUILD SUCCESSFUL in 3s`.
 - `git diff --check` and IDE diagnostics for all review-fix files — passed with no errors.
+
+## Important review-findings fix (2026-07-18)
+
+- Made every pending-message state/delete mutation account-scoped: `markSending`, `markQueued`, `markFailed`, and `deleteMessage` now take `accountId` and constrain both `account_id` and `local_id`. No production call sites exist yet.
+- Added the unique `pending_messages(account_id, local_id)` index required by SQLite for a composite parent key, and changed the attachment foreign key to `(account_id, message_local_id) → pending_messages(account_id, local_id)`. The attachment account cascade foreign key remains intact.
+- Updated `MIGRATION_1_2` with the same unique and foreign-key indexes/columns as the Room entities.
+- Added a failing-first migration assertion: an attachment for account 8 cannot reference a pending message for account 7. The RED run failed with `AssertionError: attachment account must match its pending message account`; the migrated schema now rejects that insert with a foreign-key constraint.
+
+### Important-fix test evidence
+
+- `./gradlew :examples:zulip:kspDebugKotlin` — `BUILD SUCCESSFUL in 4s`.
+- `./gradlew :examples:zulip:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.jhellerstedt.zulip.ZulipDatabaseMigrationTest` — `BUILD SUCCESSFUL in 10s`; one migration test completed on `light_phone_3(AVD) - 14`.
+- `./gradlew :examples:zulip:testDebugUnitTest` — `BUILD SUCCESSFUL in 3s`.
+- `git diff --check` and IDE diagnostics for all Important-fix files — passed with no errors.

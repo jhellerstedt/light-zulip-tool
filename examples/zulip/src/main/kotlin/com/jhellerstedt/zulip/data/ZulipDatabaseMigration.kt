@@ -91,6 +91,10 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
             """.trimIndent(),
         )
         db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS index_pending_messages_account_id_local_id " +
+                "ON pending_messages (account_id, local_id)",
+        )
+        db.execSQL(
             """
             CREATE TABLE IF NOT EXISTS pending_attachments (
                 local_id TEXT NOT NULL,
@@ -103,7 +107,8 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
                 uploaded_url TEXT,
                 PRIMARY KEY(local_id),
                 FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE,
-                FOREIGN KEY(message_local_id) REFERENCES pending_messages(local_id) ON DELETE CASCADE
+                FOREIGN KEY(account_id, message_local_id)
+                    REFERENCES pending_messages(account_id, local_id) ON DELETE CASCADE
             )
             """.trimIndent(),
         )
@@ -122,6 +127,10 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
         db.execSQL(
             "CREATE INDEX IF NOT EXISTS index_pending_attachments_message_local_id " +
                 "ON pending_attachments (message_local_id)",
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS index_pending_attachments_account_id_message_local_id " +
+                "ON pending_attachments (account_id, message_local_id)",
         )
         db.execSQL(
             "CREATE UNIQUE INDEX IF NOT EXISTS index_pending_attachments_message_local_id_source_index " +

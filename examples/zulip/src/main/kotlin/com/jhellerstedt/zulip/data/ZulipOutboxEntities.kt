@@ -33,6 +33,7 @@ class ZulipOutboxTypeConverters {
     ],
     indices = [
         Index(value = ["account_id", "state", "created_at"]),
+        Index(value = ["account_id", "local_id"], unique = true),
     ],
 )
 data class PendingMessageEntity(
@@ -58,14 +59,15 @@ data class PendingMessageEntity(
         ),
         ForeignKey(
             entity = PendingMessageEntity::class,
-            parentColumns = ["local_id"],
-            childColumns = ["message_local_id"],
+            parentColumns = ["account_id", "local_id"],
+            childColumns = ["account_id", "message_local_id"],
             onDelete = ForeignKey.CASCADE,
         ),
     ],
     indices = [
         Index(value = ["account_id"]),
         Index(value = ["message_local_id"]),
+        Index(value = ["account_id", "message_local_id"]),
         Index(value = ["message_local_id", "source_index"], unique = true),
     ],
 )

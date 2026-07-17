@@ -1,6 +1,7 @@
 package com.jhellerstedt.zulip
 
 import android.content.Context
+import android.database.sqlite.SQLiteConstraintException
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -76,6 +77,35 @@ class ZulipDatabaseMigrationTest {
                     database.openHelper.writableDatabase.query(
                         "SELECT name FROM pragma_table_info('pending_attachments') WHERE name = 'account_id'",
                     ).use { assertTrue("pending_attachments must have account_id", it.moveToFirst()) }
+                    database.openHelper.writableDatabase.execSQL(
+                        """
+                        INSERT INTO accounts
+                            (id, realm_url, realm_name, email, encrypted_api_key, user_id, zulip_feature_level, added_at)
+                        VALUES
+                            (8, 'https://other.example', 'Other', 'b@example.com', X'0304', 12, 481, 1001)
+                        """.trimIndent(),
+                    )
+                    database.openHelper.writableDatabase.execSQL(
+                        """
+                        INSERT INTO pending_messages
+                            (local_id, account_id, narrow_key, content, state, created_at, attempt_at, failure_reason)
+                        VALUES
+                            ('message-1', 7, 'narrow', 'content', 'QUEUED', 1000, NULL, NULL)
+                        """.trimIndent(),
+                    )
+                    try {
+                        database.openHelper.writableDatabase.execSQL(
+                            """
+                            INSERT INTO pending_attachments
+                                (local_id, account_id, message_local_id, source_index, display_name, mime_type, file_path, uploaded_url)
+                            VALUES
+                                ('attachment-1', 8, 'message-1', 0, 'file.txt', 'text/plain', '/tmp/file.txt', NULL)
+                            """.trimIndent(),
+                        )
+                        throw AssertionError("attachment account must match its pending message account")
+                    } catch (_: SQLiteConstraintException) {
+                        // Expected: the composite foreign key rejects cross-account pairing.
+                    }
                 } finally {
                     database.close()
                 }

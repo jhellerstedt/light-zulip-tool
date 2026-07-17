@@ -48,20 +48,23 @@ interface ZulipOutboxDao {
     )
     suspend fun attachments(accountId: Long, messageLocalId: String): List<PendingAttachmentEntity>
 
-    @Query("UPDATE pending_messages SET state = 'SENDING', attempt_at = :attemptAt WHERE local_id = :messageLocalId")
-    suspend fun markSending(messageLocalId: String, attemptAt: Long)
+    @Query(
+        "UPDATE pending_messages SET state = 'SENDING', attempt_at = :attemptAt " +
+            "WHERE account_id = :accountId AND local_id = :messageLocalId",
+    )
+    suspend fun markSending(accountId: Long, messageLocalId: String, attemptAt: Long)
 
     @Query(
         "UPDATE pending_messages SET state = 'QUEUED', failure_reason = NULL " +
-            "WHERE local_id = :messageLocalId",
+            "WHERE account_id = :accountId AND local_id = :messageLocalId",
     )
-    suspend fun markQueued(messageLocalId: String)
+    suspend fun markQueued(accountId: Long, messageLocalId: String)
 
     @Query(
         "UPDATE pending_messages SET state = 'FAILED', failure_reason = :failureReason " +
-            "WHERE local_id = :messageLocalId",
+            "WHERE account_id = :accountId AND local_id = :messageLocalId",
     )
-    suspend fun markFailed(messageLocalId: String, failureReason: String)
+    suspend fun markFailed(accountId: Long, messageLocalId: String, failureReason: String)
 
     @Query(
         "UPDATE pending_attachments SET uploaded_url = :uploadedUrl " +
@@ -69,6 +72,6 @@ interface ZulipOutboxDao {
     )
     suspend fun checkpointUpload(accountId: Long, attachmentLocalId: String, uploadedUrl: String)
 
-    @Query("DELETE FROM pending_messages WHERE local_id = :messageLocalId")
-    suspend fun deleteMessage(messageLocalId: String)
+    @Query("DELETE FROM pending_messages WHERE account_id = :accountId AND local_id = :messageLocalId")
+    suspend fun deleteMessage(accountId: Long, messageLocalId: String)
 }
