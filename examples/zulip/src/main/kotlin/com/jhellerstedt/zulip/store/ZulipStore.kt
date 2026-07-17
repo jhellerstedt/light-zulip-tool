@@ -136,7 +136,7 @@ class ZulipStore(
     }
 
     suspend fun loadMessages(narrow: Narrow): Result<List<ZulipMessage>> = runCatching {
-        val key = narrowKey(narrow)
+        val key = narrow.cacheKey()
         val response = getMessages(client, narrow)
         val sorted = response.messages.sortedBy { it.id }
         messagesByNarrow[key] = sorted.toMutableList()
@@ -175,7 +175,7 @@ class ZulipStore(
     }
 
     suspend fun markNarrowRead(narrow: Narrow) {
-        val key = narrowKey(narrow)
+        val key = narrow.cacheKey()
         val unreadIds = messagesByNarrow[key]
             ?.filter { !it.flags.contains("read") }
             ?.map { it.id }
@@ -189,7 +189,7 @@ class ZulipStore(
     }
 
     fun getMessagesFor(narrow: Narrow): List<ZulipMessage> =
-        messagesByNarrow[narrowKey(narrow)].orEmpty()
+        messagesByNarrow[narrow.cacheKey()].orEmpty()
 
     fun streamName(streamId: Int): String? = streams[streamId]?.name
 
@@ -267,7 +267,7 @@ class ZulipStore(
 
     private fun addMessage(message: ZulipMessage) {
         val narrow = narrowForMessage(message) ?: return
-        val key = narrowKey(narrow)
+        val key = narrow.cacheKey()
         val list = messagesByNarrow.getOrPut(key) { mutableListOf() }
         val existingIndex = list.indexOfFirst { it.id == message.id }
         if (existingIndex >= 0) {
@@ -305,10 +305,10 @@ class ZulipStore(
             } else {
                 Narrow.Topic(unreadStream.streamId, unreadStream.topic)
             }
-            unreadByNarrow[narrowKey(narrow)] = unreadStream.unreadIds.size
+            unreadByNarrow[narrow.cacheKey()] = unreadStream.unreadIds.size
         }
         unreadMsgs?.pms?.forEach { pm ->
-            val key = narrowKey(Narrow.Dm(listOf(pm.senderId)))
+            val key = Narrow.Dm(listOf(pm.senderId)).cacheKey()
             unreadByNarrow[key] = pm.unreadIds.size
         }
     }
@@ -320,7 +320,7 @@ class ZulipStore(
 
         unreadByNarrow.forEach { (key, count) ->
             if (count <= 0) return@forEach
-            val narrow = narrowFromKey(key) ?: return@forEach
+            val narrow = narrowFromCacheKey(key) ?: return@forEach
             val preview = messagesByNarrow[key]?.lastOrNull()?.let { stripHtml(it.content) }
             conversations.add(
                 InboxConversation(
@@ -397,27 +397,6 @@ class ZulipStore(
         return if (senderId != null && senderId != account.userId) listOf(senderId) else emptyList()
     }
 
-    private fun narrowKey(narrow: Narrow): String = when (narrow) {
-        is Narrow.Topic -> "stream:${narrow.streamId}:${narrow.topic}"
-        is Narrow.Channel -> "stream:${narrow.streamId}:"
-        is Narrow.Dm -> "dm:${narrow.userIds.sorted().joinToString(",")}"
-    }
-
-    private fun narrowFromKey(key: String): Narrow? {
-        return when {
-            key.startsWith("stream:") -> {
-                val parts = key.removePrefix("stream:").split(":", limit = 2)
-                val streamId = parts[0].toIntOrNull() ?: return null
-                val topic = parts.getOrNull(1).orEmpty()
-                if (topic.isEmpty()) Narrow.Channel(streamId) else Narrow.Topic(streamId, topic)
-            }
-            key.startsWith("dm:") -> {
-                val ids = key.removePrefix("dm:").split(",").mapNotNull { it.toIntOrNull() }
-                if (ids.isEmpty()) null else Narrow.Dm(ids)
-            }
-            else -> null
-        }
-    }
 }
 
 data class DirectMessageConversation(

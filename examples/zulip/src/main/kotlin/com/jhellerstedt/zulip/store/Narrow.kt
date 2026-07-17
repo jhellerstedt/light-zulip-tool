@@ -79,6 +79,32 @@ sealed class Narrow {
     }
 }
 
+fun Narrow.normalized(): Narrow = when (this) {
+    is Narrow.Topic -> this
+    is Narrow.Channel -> this
+    is Narrow.Dm -> Narrow.Dm(userIds.distinct().sorted())
+}
+
+fun Narrow.cacheKey(): String = when (val narrow = normalized()) {
+    is Narrow.Topic -> "stream:${narrow.streamId}:${narrow.topic}"
+    is Narrow.Channel -> "stream:${narrow.streamId}:"
+    is Narrow.Dm -> "dm:${narrow.userIds.joinToString(",")}"
+}
+
+fun narrowFromCacheKey(value: String): Narrow? = when {
+    value.startsWith("stream:") -> {
+        val parts = value.removePrefix("stream:").split(":", limit = 2)
+        val streamId = parts.getOrNull(0)?.toIntOrNull() ?: return null
+        val topic = parts.getOrNull(1).orEmpty()
+        if (topic.isEmpty()) Narrow.Channel(streamId) else Narrow.Topic(streamId, topic)
+    }
+    value.startsWith("dm:") -> {
+        val ids = value.removePrefix("dm:").split(",").mapNotNull(String::toIntOrNull).distinct().sorted()
+        ids.takeIf { it.isNotEmpty() }?.let(Narrow::Dm)
+    }
+    else -> null
+}
+
 data class InboxConversation(
     val narrow: Narrow,
     val title: String,
