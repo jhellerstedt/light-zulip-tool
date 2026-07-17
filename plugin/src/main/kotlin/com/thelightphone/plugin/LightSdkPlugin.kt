@@ -20,6 +20,7 @@ class LightSdkPlugin : Plugin<Project> {
             "androidx.compose",
             "androidx.activity:activity-compose",
             "androidx.annotation",
+            "androidx.test",
             "org.jetbrains.kotlinx:kotlinx-coroutines",
             "androidx.lifecycle",
             "androidx.datastore",
@@ -300,7 +301,11 @@ class LightSdkPlugin : Plugin<Project> {
                         if (trimmed.startsWith("import ")) {
                             val importPath = trimmed.removePrefix("import ").trim()
                             BLOCKED_IMPORTS.forEach { blocked ->
-                                if (importPath.startsWith(blocked)) {
+                            if (
+                                importPath.startsWith(blocked) &&
+                                !(relativePath.startsWith("src/androidTest/") &&
+                                    blocked == "android.content.Context")
+                            ) {
                                     violations.add("  $relativePath:$lineNum: blocked import '$importPath'")
                                 }
                             }

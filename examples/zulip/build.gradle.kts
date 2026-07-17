@@ -13,6 +13,7 @@ android {
     defaultConfig {
         minSdk = rootProject.ext["minSdk"] as Int
         targetSdk = rootProject.ext["targetSdk"] as Int
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         manifestPlaceholders["sdkVersion"] = property("sdkVersion") as String
     }
@@ -58,4 +59,6 @@ dependencies {
     implementation(project(":sdk:client"))
     ksp(libs.androidx.room.compiler)
     testImplementation(libs.kotlin.test)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
 }

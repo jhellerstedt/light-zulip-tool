@@ -2,7 +2,6 @@ package com.jhellerstedt.zulip.data
 
 import androidx.room.ColumnInfo
 import androidx.room.Dao
-import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.Insert
@@ -10,6 +9,8 @@ import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import androidx.room.Database
+import androidx.room.TypeConverters
 
 @Entity(
     tableName = "accounts",
@@ -54,7 +55,23 @@ interface ZulipAccountDao {
     fun updateAccountMetadata(id: Long, realmName: String, zulipFeatureLevel: Int): Int
 }
 
-@Database(entities = [ZulipAccountEntity::class], version = 1, exportSchema = false)
+@Database(
+    entities = [
+        ZulipAccountEntity::class,
+        CachedStreamEntity::class,
+        CachedUserEntity::class,
+        CachedTopicEntity::class,
+        CachedConversationEntity::class,
+        CachedMessageEntity::class,
+        PendingMessageEntity::class,
+        PendingAttachmentEntity::class,
+    ],
+    version = 2,
+    exportSchema = false,
+)
+@TypeConverters(ZulipOutboxTypeConverters::class)
 abstract class ZulipDatabase : RoomDatabase() {
     abstract fun accountDao(): ZulipAccountDao
+    abstract fun cacheDao(): ZulipCacheDao
+    abstract fun outboxDao(): ZulipOutboxDao
 }
