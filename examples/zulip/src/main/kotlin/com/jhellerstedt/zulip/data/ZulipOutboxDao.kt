@@ -42,8 +42,11 @@ interface ZulipOutboxDao {
     )
     suspend fun oldestQueuedMessage(accountId: Long): PendingMessageEntity?
 
-    @Query("SELECT * FROM pending_attachments WHERE message_local_id = :messageLocalId ORDER BY source_index ASC")
-    suspend fun attachments(messageLocalId: String): List<PendingAttachmentEntity>
+    @Query(
+        "SELECT * FROM pending_attachments WHERE account_id = :accountId AND message_local_id = :messageLocalId " +
+            "ORDER BY source_index ASC",
+    )
+    suspend fun attachments(accountId: Long, messageLocalId: String): List<PendingAttachmentEntity>
 
     @Query("UPDATE pending_messages SET state = 'SENDING', attempt_at = :attemptAt WHERE local_id = :messageLocalId")
     suspend fun markSending(messageLocalId: String, attemptAt: Long)
@@ -60,8 +63,11 @@ interface ZulipOutboxDao {
     )
     suspend fun markFailed(messageLocalId: String, failureReason: String)
 
-    @Query("UPDATE pending_attachments SET uploaded_url = :uploadedUrl WHERE local_id = :attachmentLocalId")
-    suspend fun checkpointUpload(attachmentLocalId: String, uploadedUrl: String)
+    @Query(
+        "UPDATE pending_attachments SET uploaded_url = :uploadedUrl " +
+            "WHERE local_id = :attachmentLocalId AND account_id = :accountId",
+    )
+    suspend fun checkpointUpload(accountId: Long, attachmentLocalId: String, uploadedUrl: String)
 
     @Query("DELETE FROM pending_messages WHERE local_id = :messageLocalId")
     suspend fun deleteMessage(messageLocalId: String)

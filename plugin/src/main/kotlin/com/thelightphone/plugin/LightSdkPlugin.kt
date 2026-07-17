@@ -20,7 +20,6 @@ class LightSdkPlugin : Plugin<Project> {
             "androidx.compose",
             "androidx.activity:activity-compose",
             "androidx.annotation",
-            "androidx.test",
             "org.jetbrains.kotlinx:kotlinx-coroutines",
             "androidx.lifecycle",
             "androidx.datastore",
@@ -331,9 +330,11 @@ class LightSdkPlugin : Plugin<Project> {
         return INTERNAL_CONFIG_PREFIXES.any { name.startsWith(it) }
     }
 
-    private fun isAllowed(group: String, name: String): Boolean {
+    private fun isAllowed(group: String, name: String, configurationName: String): Boolean {
         val coordinate = "$group:$name"
-        return ALLOWED_DEPENDENCIES.any { coordinate.startsWith(it) }
+        return ALLOWED_DEPENDENCIES.any { coordinate.startsWith(it) } ||
+                (coordinate.startsWith("androidx.test") &&
+                    configurationName.contains("androidtest", ignoreCase = true))
     }
 
     /**
@@ -353,7 +354,7 @@ class LightSdkPlugin : Plugin<Project> {
                     if (dep is ProjectDependency) return@forEach
 
                     val group = dep.group ?: return@forEach
-                    if (!isAllowed(group, dep.name)) {
+                    if (!isAllowed(group, dep.name, config.name)) {
                         violations.add("  ${config.name}: ${group}:${dep.name}:${dep.version ?: "?"}")
                     }
                 }
@@ -397,7 +398,7 @@ class LightSdkPlugin : Plugin<Project> {
 
                 resolved.forEach { dep ->
                     if (isProjectDependency(dep, project)) return@forEach
-                    if (isAllowed(dep.moduleGroup, dep.moduleName)) {
+                    if (isAllowed(dep.moduleGroup, dep.moduleName, config.name)) {
                         collectTransitives(dep)
                     }
                 }
@@ -408,7 +409,7 @@ class LightSdkPlugin : Plugin<Project> {
                     val resolvedCoord = "${dep.moduleGroup}:${dep.moduleName}"
 
                     if (resolvedCoord in allowedTransitives) return@forEach
-                    if (isAllowed(dep.moduleGroup, dep.moduleName)) return@forEach
+                    if (isAllowed(dep.moduleGroup, dep.moduleName, config.name)) return@forEach
 
                     violations.add("  ${config.name}: $resolvedCoord:${dep.moduleVersion} (unexpected resolved dependency — possible substitution)")
                 }

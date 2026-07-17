@@ -73,6 +73,9 @@ class ZulipDatabaseMigrationTest {
                             arrayOf(table),
                         ).use { assertTrue("missing $table", it.moveToFirst()) }
                     }
+                    database.openHelper.writableDatabase.query(
+                        "SELECT name FROM pragma_table_info('pending_attachments') WHERE name = 'account_id'",
+                    ).use { assertTrue("pending_attachments must have account_id", it.moveToFirst()) }
                 } finally {
                     database.close()
                 }

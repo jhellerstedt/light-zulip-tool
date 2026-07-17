@@ -51,6 +51,12 @@ data class PendingMessageEntity(
     primaryKeys = ["local_id"],
     foreignKeys = [
         ForeignKey(
+            entity = ZulipAccountEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["account_id"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+        ForeignKey(
             entity = PendingMessageEntity::class,
             parentColumns = ["local_id"],
             childColumns = ["message_local_id"],
@@ -58,12 +64,14 @@ data class PendingMessageEntity(
         ),
     ],
     indices = [
+        Index(value = ["account_id"]),
         Index(value = ["message_local_id"]),
         Index(value = ["message_local_id", "source_index"], unique = true),
     ],
 )
 data class PendingAttachmentEntity(
     @ColumnInfo(name = "local_id") val localId: String,
+    @ColumnInfo(name = "account_id") val accountId: Long,
     @ColumnInfo(name = "message_local_id") val messageLocalId: String,
     @ColumnInfo(name = "source_index") val sourceIndex: Int,
     @ColumnInfo(name = "display_name") val displayName: String,
