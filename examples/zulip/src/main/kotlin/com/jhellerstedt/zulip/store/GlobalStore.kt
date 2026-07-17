@@ -1,12 +1,16 @@
 package com.jhellerstedt.zulip.store
 
+import com.jhellerstedt.zulip.api.DefaultZulipGateway
 import com.jhellerstedt.zulip.api.ZulipApiException
 import com.jhellerstedt.zulip.api.ZulipClient
+import com.jhellerstedt.zulip.api.ZulipGateway
 import com.jhellerstedt.zulip.data.AccountRepository
 import com.jhellerstedt.zulip.data.StoredZulipAccount
+import com.jhellerstedt.zulip.data.ZulipCacheRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,9 +32,12 @@ fun shouldReregisterEventQueue(error: Throwable): Boolean {
 
 class GlobalStore(
     private val accountRepository: AccountRepository,
+    private val cacheRepository: ZulipCacheRepository,
+    private val gateway: ZulipGateway = DefaultZulipGateway(),
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val poller = EventPoller(scope)
+    private val coordinator = ZulipSyncCoordinator(gateway, cacheRepository)
+    private val poller = EventPoller(scope, gateway, coordinator)
     private val switchMutex = Mutex()
 
     private val stores = mutableMapOf<Long, ZulipStore>()
@@ -44,12 +51,12 @@ class GlobalStore(
 
     var selectedNarrow: Narrow? = null
 
-    suspend fun initialize() {
+    suspend fun initialize(): Result<ZulipStore> {
         val accounts = withContext(Dispatchers.IO) { accountRepository.getAllAccounts() }
-        if (accounts.isEmpty()) return
+        if (accounts.isEmpty()) return Result.failure(IllegalStateException("No accounts to restore"))
         val activeId = accountRepository.getActiveAccountId()
         val target = accounts.firstOrNull { it.id == activeId } ?: accounts.first()
-        switchAccount(target.id)
+        return switchAccount(target.id)
     }
 
     fun listAccounts(): List<StoredZulipAccount> = accountRepository.getAllAccounts()
@@ -112,7 +119,7 @@ class GlobalStore(
 
     private suspend fun switchAccountLocked(accountId: Long): ZulipStore {
         poller.stop()
-        var account = requireNotNull(accountRepository.getAccount(accountId)) {
+        val account = requireNotNull(accountRepository.getAccount(accountId)) {
             "Account not found"
         }
         accountRepository.setActiveAccountId(accountId)
@@ -128,26 +135,17 @@ class GlobalStore(
         }
         store.updateAccountMetadata(account)
 
-        if (store.queueId.isEmpty()) {
-            val registerResult = store.register()
-            if (registerResult.isFailure && shouldDowngradeIdleQueueTimeout(registerResult.exceptionOrNull()!!)) {
-                account = withContext(Dispatchers.IO) {
-                    accountRepository.updateAccountMetadata(
-                        id = account.id,
-                        realmName = account.realmName,
-                        zulipFeatureLevel = 0,
-                    )
-                }
-                _activeAccount.value = account
-                store.updateAccountMetadata(account)
-                store.register().getOrThrow()
-            } else {
-                registerResult.getOrThrow()
-            }
-        }
-
+        val hydration = coordinator.hydrate(store)
         _activeStore.value = store
-        poller.start(store)
+        if (hydration.hasCachedState) {
+            scope.launch {
+                coordinator.register(store)
+                    .onSuccess { poller.start(store) }
+            }
+        } else {
+            coordinator.register(store).getOrThrow()
+            poller.start(store)
+        }
         return store
     }
 }

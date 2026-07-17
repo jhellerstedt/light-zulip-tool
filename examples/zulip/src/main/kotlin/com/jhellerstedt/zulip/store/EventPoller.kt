@@ -1,6 +1,6 @@
 package com.jhellerstedt.zulip.store
 
-import com.jhellerstedt.zulip.api.routes.getEvents
+import com.jhellerstedt.zulip.api.ZulipGateway
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -11,6 +11,8 @@ import kotlin.math.min
 
 class EventPoller(
     private val scope: CoroutineScope,
+    private val gateway: ZulipGateway,
+    private val coordinator: ZulipSyncCoordinator,
 ) {
     private var pollerJob: Job? = null
     private var backoffAttempt = 0
@@ -32,22 +34,22 @@ class EventPoller(
         val job = currentCoroutineContext()[Job]
         while (job?.isActive != false) {
             try {
-                val response = getEvents(
+                val response = gateway.events(
                     client = store.client,
                     queueId = store.queueId,
                     lastEventId = store.lastEventId,
-                    eventRequestTimeoutMillis = store.eventRequestTimeoutMillis,
+                    timeoutMillis = store.eventRequestTimeoutMillis,
                     dontBlock = backoffAttempt > 0,
                 )
                 response.events.forEach { event ->
-                    store.handleEvent(event)
+                    coordinator.applyEvent(store, event)
                 }
                 backoffAttempt = 0
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 if (shouldReregisterEventQueue(error)) {
-                    val registerResult = store.register()
+                    val registerResult = coordinator.register(store)
                     if (registerResult.isSuccess) {
                         store.clearError()
                         backoffAttempt = 0

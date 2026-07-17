@@ -44,17 +44,15 @@ class ChooseAccountViewModel(
             if (!autoRestoreActiveAccount) {
                 return@launch
             }
-            withContext(Dispatchers.IO) {
-                runCatching { globalStore.initialize() }
-            }.onSuccess {
-                if (globalStore.activeAccount.value != null) {
+            withContext(Dispatchers.IO) { globalStore.initialize() }
+                .onSuccess {
                     _uiState.update { it.copy(navigateHome = true) }
                 }
-            }.onFailure { error ->
-                _uiState.update {
-                    it.copy(errorMessage = error.message ?: "Failed to restore account")
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(errorMessage = error.message ?: "Failed to restore account")
+                    }
                 }
-            }
         }
     }
 

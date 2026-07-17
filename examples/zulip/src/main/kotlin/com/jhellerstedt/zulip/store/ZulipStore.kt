@@ -13,6 +13,7 @@ import com.jhellerstedt.zulip.api.routes.markMessagesRead
 import com.jhellerstedt.zulip.api.routes.registerQueue
 import com.jhellerstedt.zulip.api.routes.sendMessage
 import com.jhellerstedt.zulip.api.routes.uploadFile
+import com.jhellerstedt.zulip.data.CachedAccountSnapshot
 import com.jhellerstedt.zulip.data.StoredZulipAccount
 import com.jhellerstedt.zulip.ui.UploadedAttachmentLink
 import com.jhellerstedt.zulip.ui.buildComposeMessageBody
@@ -33,6 +34,10 @@ data class PendingUploadAttachment(
     val mimeType: String,
     val file: File,
 )
+
+enum class ConnectionState { ONLINE, REFRESHING, OFFLINE }
+
+data class HydrationResult(val hasCachedState: Boolean)
 
 class ZulipStore(
     account: StoredZulipAccount,
@@ -69,6 +74,40 @@ class ZulipStore(
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    private val _connectionState = MutableStateFlow(ConnectionState.REFRESHING)
+    val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
+
+    fun setConnectionState(state: ConnectionState) {
+        _connectionState.value = state
+    }
+
+    fun applyCachedSnapshot(snapshot: CachedAccountSnapshot) {
+        streams.clear()
+        snapshot.streams.forEach { stream -> streams[stream.streamId] = stream }
+        users.clear()
+        snapshot.users.forEach { user -> users[user.userId] = user }
+        messagesByNarrow.clear()
+        snapshot.messagesByNarrow.forEach { (narrow, cachedMessages) ->
+            messagesByNarrow[narrow.cacheKey()] = cachedMessages.sortedBy { it.id }.toMutableList()
+        }
+        unreadByNarrow.clear()
+        snapshot.conversations.forEach { conversation ->
+            if (conversation.unreadCount > 0) {
+                unreadByNarrow[conversation.narrowKey] = conversation.unreadCount
+            }
+        }
+        publishSelectableUsers()
+        _streamsList.value = streams.values.sortedBy { it.name.lowercase() }
+        rebuildInbox()
+    }
+
+    fun applyMessages(narrow: Narrow, messages: List<ZulipMessage>) {
+        messagesByNarrow[narrow.cacheKey()] = messages.sortedBy { it.id }.toMutableList()
+    }
+
+    fun narrowForEvent(event: com.jhellerstedt.zulip.api.models.ZulipEvent): Narrow? =
+        event.message?.let { narrowForMessage(it) }
 
     suspend fun register(): Result<Unit> = runCatching {
         _isLoading.value = true

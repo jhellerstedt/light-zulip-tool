@@ -59,6 +59,7 @@ dependencies {
     implementation(project(":sdk:client"))
     ksp(libs.androidx.room.compiler)
     testImplementation(libs.kotlin.test)
+    testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)
 }
