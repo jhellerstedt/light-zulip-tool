@@ -109,6 +109,25 @@ class ZulipStore(
     fun narrowForEvent(event: com.jhellerstedt.zulip.api.models.ZulipEvent): Narrow? =
         event.message?.let { narrowForMessage(it) }
 
+    /**
+     * Computes the [InboxConversation] projection an event would produce, without mutating
+     * any state. Callers can use this to persist cache rows before [handleEvent] updates memory.
+     */
+    fun projectedConversationForEvent(event: com.jhellerstedt.zulip.api.models.ZulipEvent): InboxConversation? {
+        val message = event.message ?: return null
+        val narrow = narrowForMessage(message) ?: return null
+        val key = narrow.cacheKey()
+        val streamNames = streams.mapValues { it.value.name }
+        val userNames = users.mapValues { it.value.fullName }
+        val currentUnread = unreadByNarrow[key] ?: 0
+        val projectedUnread = if (!message.flags.contains("read")) currentUnread + 1 else currentUnread
+        return InboxConversation(
+            narrow = narrow,
+            title = narrow.displayTitle(streamNames, userNames),
+            unreadCount = projectedUnread,
+        )
+    }
+
     suspend fun register(): Result<Unit> = runCatching {
         _isLoading.value = true
         try {

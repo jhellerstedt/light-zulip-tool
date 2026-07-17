@@ -29,12 +29,16 @@ class ZulipCacheRepository(
     suspend fun loadAccount(accountId: Long): CachedAccountSnapshot {
         prune(accountId)
         val conversations = dao.conversations(accountId)
+        // Union with distinct cached_messages narrow keys so previously opened (now-read)
+        // conversations keep their cached messages even after register replaces conversation
+        // rows with only the currently-unread set.
+        val narrowKeys = (conversations.map { it.narrowKey } + dao.messageNarrowKeys(accountId)).distinct()
         return CachedAccountSnapshot(
             streams = dao.streams(accountId).map { it.toZulipStream() },
             users = dao.users(accountId).map { it.toZulipUser() },
             conversations = conversations,
-            messagesByNarrow = conversations.mapNotNull { conversation ->
-                narrowFromCacheKey(conversation.narrowKey)?.let { narrow ->
+            messagesByNarrow = narrowKeys.mapNotNull { narrowKey ->
+                narrowFromCacheKey(narrowKey)?.let { narrow ->
                     narrow to messages(accountId, narrow)
                 }
             }.toMap(),

@@ -36,7 +36,19 @@ class GlobalStore(
     private val gateway: ZulipGateway = DefaultZulipGateway(),
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val coordinator = ZulipSyncCoordinator(gateway, cacheRepository)
+    private val coordinator = ZulipSyncCoordinator(
+        gateway = gateway,
+        cache = cacheRepository,
+        onFeatureLevelDowngraded = { downgraded ->
+            withContext(Dispatchers.IO) {
+                accountRepository.updateAccountMetadata(
+                    id = downgraded.id,
+                    realmName = downgraded.realmName,
+                    zulipFeatureLevel = downgraded.zulipFeatureLevel,
+                )
+            }
+        },
+    )
     private val poller = EventPoller(scope, gateway, coordinator)
     private val switchMutex = Mutex()
 

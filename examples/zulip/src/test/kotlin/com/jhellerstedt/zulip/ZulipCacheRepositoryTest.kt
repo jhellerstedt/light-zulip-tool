@@ -98,6 +98,33 @@ class ZulipCacheRepositoryTest {
     }
 
     @Test
+    fun loadAccountKeepsCachedMessagesForReadConversationsAfterRegisterDropsThem() = runBlocking {
+        val dao = FakeCacheDao()
+        val repository = ZulipCacheRepository(dao, nowMillis = { now })
+        val accountId = 7L
+        val readNarrow = Narrow.Topic(4, "release")
+
+        // Simulate a previously-opened topic that has since been fully read: it has cached
+        // messages and a conversation row, but the next register response reports no unread
+        // conversations at all.
+        dao.conversationRows += CachedConversationEntity(accountId, readNarrow.cacheKey(), "Mobile > release", 0, 9, 9, now)
+        dao.messageRows += CachedMessageEntity(accountId, 9, readNarrow.cacheKey(), Json.encodeToString(message(9)), now)
+
+        repository.replaceRegisterSnapshot(
+            accountId,
+            RegisterQueueResponse(
+                result = "success",
+                subscriptions = listOf(ZulipStream("mobile", 4, "", false)),
+            ),
+            conversations = emptyList(),
+        )
+
+        assertTrue(dao.conversationRows.none { it.accountId == accountId })
+        val snapshot = repository.loadAccount(accountId)
+        assertEquals(listOf(9), snapshot.messagesByNarrow.getValue(readNarrow).map { it.id })
+    }
+
+    @Test
     fun loadAccountPrunesExpiredRowsBeforeReturningMessages() = runBlocking {
         val dao = FakeCacheDao()
         val repository = ZulipCacheRepository(dao, nowMillis = { now })

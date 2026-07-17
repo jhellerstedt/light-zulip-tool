@@ -5,6 +5,7 @@ import com.jhellerstedt.zulip.api.models.RegisterQueueResponse
 import com.jhellerstedt.zulip.api.models.ZulipEvent
 import com.jhellerstedt.zulip.api.models.ZulipMessage
 import com.jhellerstedt.zulip.api.models.ZulipTopic
+import com.jhellerstedt.zulip.data.StoredZulipAccount
 import com.jhellerstedt.zulip.data.ZulipCacheRepository
 import kotlinx.coroutines.CancellationException
 
@@ -15,6 +16,7 @@ import kotlinx.coroutines.CancellationException
 class ZulipSyncCoordinator(
     private val gateway: ZulipGateway,
     private val cache: ZulipCacheRepository,
+    private val onFeatureLevelDowngraded: suspend (StoredZulipAccount) -> Unit = {},
 ) {
     suspend fun hydrate(store: ZulipStore): HydrationResult {
         val snapshot = cache.loadAccount(store.account.id)
@@ -61,12 +63,9 @@ class ZulipSyncCoordinator(
     }
 
     suspend fun applyEvent(store: ZulipStore, event: ZulipEvent) {
-        store.handleEvent(event)
-        val narrow = store.narrowForEvent(event)
-        val conversation = narrow?.let { target ->
-            store.inbox.value.firstOrNull { it.narrow.cacheKey() == target.cacheKey() }
-        }
+        val conversation = store.projectedConversationForEvent(event)
         cache.applyEvent(store.account.id, event, conversation)
+        store.handleEvent(event)
     }
 
     private suspend fun registerWithCompatibilityRetry(store: ZulipStore): RegisterQueueResponse {
@@ -74,7 +73,9 @@ class ZulipSyncCoordinator(
             gateway.register(store.client, store.account.zulipFeatureLevel)
         } catch (error: Exception) {
             if (shouldDowngradeIdleQueueTimeout(error)) {
-                store.updateAccountMetadata(store.account.copy(zulipFeatureLevel = 0))
+                val downgraded = store.account.copy(zulipFeatureLevel = 0)
+                onFeatureLevelDowngraded(downgraded)
+                store.updateAccountMetadata(downgraded)
                 gateway.register(store.client, store.account.zulipFeatureLevel)
             } else {
                 throw error

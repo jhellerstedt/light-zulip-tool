@@ -167,6 +167,68 @@ class ZulipSyncCoordinatorTest {
     }
 
     @Test
+    fun registerPersistsFeatureLevelDowngradeSoItSurvivesAccountReload() = runTest {
+        val dao = FakeSyncCacheDao()
+        val cache = ZulipCacheRepository(dao, nowMillis = { now })
+        val gateway = FakeZulipGateway()
+        gateway.registerFailureOnce = com.jhellerstedt.zulip.api.ZulipApiException.ApiError(
+            code = "BAD_REQUEST",
+            message = "\"idle_queue_timeout\" is not valid JSON",
+        )
+        gateway.registerResponse = RegisterQueueResponse(result = "success", queueId = "queue-1")
+        val persistedDowngrades = mutableListOf<StoredZulipAccount>()
+        val coordinator = ZulipSyncCoordinator(
+            gateway = gateway,
+            cache = cache,
+            onFeatureLevelDowngraded = { account -> persistedDowngrades += account },
+        )
+        val store = fixtureStore(fixtureAccount().copy(zulipFeatureLevel = 42))
+
+        val result = coordinator.register(store)
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf(42, 0), gateway.registerFeatureLevels)
+        assertEquals(listOf(0), persistedDowngrades.map { it.zulipFeatureLevel })
+        assertEquals(0, store.account.zulipFeatureLevel)
+        store.client.close()
+    }
+
+    @Test
+    fun applyEventPersistFailureLeavesMemoryUnchanged() = runTest {
+        val dao = FakeSyncCacheDao()
+        dao.failOnUpsertMessages = RuntimeException("db unavailable")
+        val cache = ZulipCacheRepository(dao, nowMillis = { now })
+        val coordinator = ZulipSyncCoordinator(FakeZulipGateway(), cache)
+        val store = fixtureStore()
+        store.applyRegisterResponse(
+            RegisterQueueResponse(
+                result = "success",
+                queueId = "queue-1",
+                subscriptions = listOf(ZulipStream("general", 1, "", false)),
+            ),
+        )
+        val event = ZulipEvent(
+            type = "message",
+            id = 5,
+            message = ZulipMessage(
+                id = 42,
+                type = "stream",
+                content = "hello there",
+                streamId = 1,
+                topic = "release",
+                timestamp = now,
+            ),
+        )
+
+        val error = runCatching { coordinator.applyEvent(store, event) }.exceptionOrNull()
+
+        assertTrue(error is RuntimeException)
+        assertTrue(store.getMessagesFor(Narrow.Topic(1, "release")).isEmpty())
+        assertEquals(-1, store.lastEventId)
+        store.client.close()
+    }
+
+    @Test
     fun applyEventPersistsMessageToCacheAndMemory() = runTest {
         val dao = FakeSyncCacheDao()
         val cache = ZulipCacheRepository(dao, nowMillis = { now })
@@ -300,6 +362,7 @@ private class FakeZulipGateway : ZulipGateway {
     var registerDeferred: CompletableDeferred<RegisterQueueResponse>? = null
     var registerResponse: RegisterQueueResponse? = null
     var registerFailure: Throwable? = null
+    var registerFailureOnce: Throwable? = null
     val registerFeatureLevels = mutableListOf<Int>()
 
     var messagesResponse: GetMessagesResponse? = null
@@ -308,6 +371,10 @@ private class FakeZulipGateway : ZulipGateway {
     override suspend fun register(client: ZulipClient, featureLevel: Int): RegisterQueueResponse {
         registerFeatureLevels += featureLevel
         registerDeferred?.let { return it.await() }
+        registerFailureOnce?.let { failure ->
+            registerFailureOnce = null
+            throw failure
+        }
         registerFailure?.let { throw it }
         return registerResponse ?: error("no register response configured")
     }
@@ -341,6 +408,7 @@ private class FakeSyncCacheDao : ZulipCacheDao {
     val messageRows = mutableListOf<CachedMessageEntity>()
 
     var failOnUpsertStreams: Throwable? = null
+    var failOnUpsertMessages: Throwable? = null
 
     override suspend fun streams(accountId: Long): List<CachedStreamEntity> =
         streamRows.filter { it.accountId == accountId }
@@ -395,6 +463,7 @@ private class FakeSyncCacheDao : ZulipCacheDao {
     }
 
     override suspend fun upsertMessages(rows: List<CachedMessageEntity>) {
+        failOnUpsertMessages?.let { throw it }
         rows.forEach { row ->
             messageRows.removeAll {
                 it.accountId == row.accountId && it.narrowKey == row.narrowKey && it.messageId == row.messageId
