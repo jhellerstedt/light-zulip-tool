@@ -7,6 +7,7 @@ import com.jhellerstedt.zulip.api.ZulipGateway
 import com.jhellerstedt.zulip.data.StoredZulipAccount
 import com.jhellerstedt.zulip.data.ZulipAccountStore
 import com.jhellerstedt.zulip.data.ZulipCacheRepository
+import com.jhellerstedt.zulip.data.ZulipOutboxRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -34,9 +35,7 @@ class GlobalStore(
     private val accountRepository: ZulipAccountStore,
     private val cacheRepository: ZulipCacheRepository,
     private val gateway: ZulipGateway = DefaultZulipGateway(),
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
-) {
-    private val coordinator = ZulipSyncCoordinator(
+    private val coordinator: ZulipSyncCoordinator = ZulipSyncCoordinator(
         gateway = gateway,
         cache = cacheRepository,
         onFeatureLevelDowngraded = { downgraded ->
@@ -48,7 +47,11 @@ class GlobalStore(
                 )
             }
         },
-    )
+    ),
+    private val outboxRepository: ZulipOutboxRepository? = null,
+    private val outboxScheduler: OutboxScheduler? = null,
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+) {
     private val poller = EventPoller(scope, gateway, coordinator)
     private val switchMutex = Mutex()
 
@@ -131,14 +134,16 @@ class GlobalStore(
             clients.remove(accountId)?.close()
             withContext(Dispatchers.IO) {
                 accountRepository.deleteAccount(accountId)
+                outboxRepository?.deleteAccount(accountId)
             }
+            outboxScheduler?.cancel(accountId)
             val remaining = accountRepository.getAllAccounts()
             if (remaining.isNotEmpty() && _activeAccount.value == null) {
                 nextAccountId = remaining.first().id
             }
         }
         if (nextAccountId != null) {
-            switchAccount(nextAccountId!!)
+            switchAccount(nextAccountId)
         }
     }
 

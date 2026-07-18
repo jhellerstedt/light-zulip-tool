@@ -34,32 +34,41 @@ fun classifyOutboxFailure(error: Throwable): OutboxFailureKind = when (error) {
 class ZulipOutboxProcessor(
     private val repository: ZulipOutboxRepository,
     private val gateway: ZulipGateway,
-    private val client: ZulipClient,
+    private val client: ZulipClient? = null,
+    private val clientForAccount: ((Long) -> ZulipClient)? = null,
 ) {
     suspend fun process(accountId: Long): OutboxRunResult {
-        repository.resetInterrupted(accountId)
-        while (true) {
-            val item = repository.claimNext(accountId) ?: return OutboxRunResult.Success
-            try {
-                processItem(item)
-                repository.complete(item)
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Throwable) {
-                when (classifyOutboxFailure(error)) {
-                    OutboxFailureKind.TRANSIENT -> {
-                        repository.requeue(item.message.localId)
-                        return OutboxRunResult.Retry
-                    }
-                    OutboxFailureKind.PERMANENT -> {
-                        repository.fail(item.message.localId, error.message ?: "Permanent outbox failure")
+        val accountClient = client ?: requireNotNull(clientForAccount) {
+            "An outbox processor requires a client or client provider"
+        }.invoke(accountId)
+        return try {
+            repository.resetInterrupted(accountId)
+            while (true) {
+                val item = repository.claimNext(accountId) ?: return OutboxRunResult.Success
+                try {
+                    processItem(item, accountClient)
+                    repository.complete(item)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    when (classifyOutboxFailure(error)) {
+                        OutboxFailureKind.TRANSIENT -> {
+                            repository.requeue(item.message.localId)
+                            return OutboxRunResult.Retry
+                        }
+                        OutboxFailureKind.PERMANENT -> {
+                            repository.fail(item.message.localId, error.message ?: "Permanent outbox failure")
+                        }
                     }
                 }
             }
+            error("Unreachable")
+        } finally {
+            if (client == null) accountClient.close()
         }
     }
 
-    private suspend fun processItem(item: PendingOutboxItem) {
+    private suspend fun processItem(item: PendingOutboxItem, client: ZulipClient) {
         val narrow = narrowFromCacheKey(item.message.narrowKey)
             ?: throw IllegalArgumentException("Invalid outbox narrow: ${item.message.narrowKey}")
         val links = item.attachments.map { attachment ->
