@@ -100,11 +100,7 @@ class GlobalStore(
             ?: return Result.failure(IllegalStateException("Zulip outbox repository is not registered"))
         val result = repository.enqueue(accountId, narrow, content, attachments)
         return result.map { localId ->
-            try {
-                outboxScheduler?.enqueue(accountId)
-            } catch (_: Exception) {
-                // Best-effort; pending rows are recovered on account activation.
-            }
+            tryScheduleOutbox(accountId)
             localId
         }
     }
@@ -114,7 +110,7 @@ class GlobalStore(
 
     suspend fun retryOutboxMessage(messageId: String, accountId: Long) {
         outboxRepository?.retry(messageId)
-        outboxScheduler?.enqueue(accountId)
+        tryScheduleOutbox(accountId)
     }
 
     suspend fun discardOutboxMessage(messageId: String) {
@@ -197,9 +193,16 @@ class GlobalStore(
      */
     private suspend fun scheduleOutboxWorkerIfPending(accountId: Long) {
         val repository = outboxRepository ?: return
-        val scheduler = outboxScheduler ?: return
         if (repository.observeSummary(accountId).first().pendingCount > 0) {
-            scheduler.enqueue(accountId)
+            tryScheduleOutbox(accountId)
+        }
+    }
+
+    private fun tryScheduleOutbox(accountId: Long) {
+        try {
+            outboxScheduler?.enqueue(accountId)
+        } catch (_: Exception) {
+            // Best-effort; pending rows are recovered on account activation.
         }
     }
 

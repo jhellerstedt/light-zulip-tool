@@ -106,6 +106,35 @@ class ZulipHomeViewModelTest {
     }
 
     @Test
+    fun retryFailedMessageSucceedsWhenSchedulerThrows() = runTest {
+        val outboxDao = InMemoryOutboxDao()
+        val callLog = mutableListOf<String>()
+        val globalStore = buildGlobalStore(
+            outboxDao,
+            scope = backgroundScope,
+            callLog = callLog,
+            scheduler = ThrowingHomeOutboxScheduler(callLog),
+        )
+        outboxDao.seedFailedMessage(accountId = 1L, localId = "m1")
+
+        globalStore.switchAccount(1L).getOrThrow()
+        val viewModel = ZulipHomeViewModel(globalStore)
+
+        withTimeout(1_000) {
+            viewModel.uiState.first { it.failedMessage != null }
+        }
+
+        viewModel.retryFailedMessage()
+
+        val recoveredState = withTimeout(1_000) {
+            viewModel.uiState.first { it.failedMessage == null }
+        }
+        assertNull(recoveredState.failedMessage)
+        assertEquals(com.jhellerstedt.zulip.data.OutboxMessageState.QUEUED, outboxDao.message("m1")?.state)
+        assertTrue(callLog.contains("scheduler.enqueue"))
+    }
+
+    @Test
     fun discardFailedMessageRemovesFailure() = runTest {
         val outboxDao = InMemoryOutboxDao()
         val globalStore = buildGlobalStore(outboxDao, scope = backgroundScope)
@@ -154,6 +183,7 @@ class ZulipHomeViewModelTest {
         outboxDao: ZulipOutboxDao,
         scope: kotlinx.coroutines.CoroutineScope,
         callLog: MutableList<String> = mutableListOf(),
+        scheduler: OutboxScheduler = LoggingHomeOutboxScheduler(callLog),
     ): GlobalStore {
         val accountStore = FakeHomeAccountStore(
             listOf(
@@ -163,7 +193,7 @@ class ZulipHomeViewModelTest {
         )
         val cache = ZulipCacheRepository(FakeHomeCacheDao(), nowMillis = { now })
         val outboxRepository = ZulipOutboxRepository(outboxDao, NoOpHomeOutboxFileStore())
-        val outboxScheduler = LoggingHomeOutboxScheduler(callLog)
+        val outboxScheduler = scheduler
         return GlobalStore(
             accountRepository = accountStore,
             cacheRepository = cache,
@@ -182,6 +212,19 @@ class ZulipHomeViewModelTest {
         userId = 1,
         zulipFeatureLevel = 0,
     )
+}
+
+private class ThrowingHomeOutboxScheduler(
+    private val callLog: MutableList<String>,
+) : OutboxScheduler {
+    override fun enqueue(accountId: Long): Boolean {
+        callLog += "scheduler.enqueue"
+        error("WorkManager unavailable")
+    }
+
+    override fun cancel(accountId: Long) {
+        callLog += "scheduler.cancel"
+    }
 }
 
 private class LoggingHomeOutboxScheduler(

@@ -237,6 +237,53 @@ class GlobalStoreTest {
         assertTrue(callLog.contains("scheduler.enqueue"))
     }
 
+    @Test
+    fun retryOutboxMessageRequeuesEvenWhenSchedulerThrows() = runTest {
+        val accountId = 1L
+        val messageId = "msg-1"
+        val callLog = mutableListOf<String>()
+        val accountStore = FakeAccountStore(listOf(fixtureAccount(id = accountId, email = "a@example.com")))
+        val cache = ZulipCacheRepository(FakeGlobalCacheDao(), nowMillis = { now })
+        val outboxRepository = ZulipOutboxRepository(RetryRecordingOutboxDao(callLog, messageId, accountId), NoOpOutboxFileStore())
+        val outboxScheduler = ThrowingOutboxScheduler(callLog)
+        val globalStore = GlobalStore(
+            accountRepository = accountStore,
+            cacheRepository = cache,
+            gateway = FakeGlobalGateway(),
+            outboxRepository = outboxRepository,
+            outboxScheduler = outboxScheduler,
+            scope = backgroundScope,
+        )
+
+        globalStore.retryOutboxMessage(messageId, accountId)
+
+        assertEquals(listOf("outbox.retry", "scheduler.enqueue"), callLog)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun switchAccountCompletesWhenPendingRowsExistButSchedulerThrows() = runTest {
+        val accountId = 1L
+        val callLog = mutableListOf<String>()
+        val accountStore = FakeAccountStore(listOf(fixtureAccount(id = accountId, email = "a@example.com")))
+        val cache = ZulipCacheRepository(FakeGlobalCacheDao(), nowMillis = { now })
+        val outboxRepository = ZulipOutboxRepository(RecordingOutboxDao(callLog, pendingCount = 1), NoOpOutboxFileStore())
+        val outboxScheduler = ThrowingOutboxScheduler(callLog)
+        val globalStore = GlobalStore(
+            accountRepository = accountStore,
+            cacheRepository = cache,
+            gateway = FakeGlobalGateway(),
+            outboxRepository = outboxRepository,
+            outboxScheduler = outboxScheduler,
+            scope = backgroundScope,
+        )
+
+        globalStore.switchAccount(accountId).getOrThrow()
+        runCurrent()
+
+        assertEquals(listOf("scheduler.enqueue"), callLog)
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun switchAccountDoesNotScheduleOutboxWorkerWhenNoPendingRows() = runTest {
@@ -444,6 +491,50 @@ private class ThrowingOutboxScheduler(
     override fun cancel(accountId: Long) {
         callLog += "outbox.cancel"
     }
+}
+
+private class RetryRecordingOutboxDao(
+    private val callLog: MutableList<String>,
+    private val messageId: String,
+    private val accountId: Long,
+) : ZulipOutboxDao {
+    override suspend fun insertMessage(message: PendingMessageEntity) = Unit
+    override suspend fun insertAttachments(attachments: List<PendingAttachmentEntity>) = Unit
+    override suspend fun insertMessageWithAttachments(
+        message: PendingMessageEntity,
+        attachments: List<PendingAttachmentEntity>,
+    ) = Unit
+
+    override fun pendingCount(accountId: Long): Flow<Int> = flowOf(0)
+    override fun firstFailedMessage(accountId: Long): Flow<PendingMessageEntity?> = flowOf(null)
+    override suspend fun oldestQueuedMessage(accountId: Long): PendingMessageEntity? = null
+    override suspend fun attachments(accountId: Long, messageLocalId: String): List<PendingAttachmentEntity> = emptyList()
+    override suspend fun message(messageLocalId: String): PendingMessageEntity? =
+        if (messageLocalId == messageId) {
+            PendingMessageEntity(
+                localId = messageId,
+                accountId = accountId,
+                narrowKey = "stream:10:",
+                content = "hello",
+                state = com.jhellerstedt.zulip.data.OutboxMessageState.FAILED,
+                createdAt = 1L,
+                attemptAt = 1L,
+                failureReason = "boom",
+            )
+        } else {
+            null
+        }
+
+    override suspend fun attachment(attachmentLocalId: String): PendingAttachmentEntity? = null
+    override suspend fun markSending(accountId: Long, messageLocalId: String, attemptAt: Long) = Unit
+    override suspend fun markQueued(accountId: Long, messageLocalId: String) {
+        callLog += "outbox.retry"
+    }
+    override suspend fun markFailed(accountId: Long, messageLocalId: String, failureReason: String) = Unit
+    override suspend fun checkpointUpload(accountId: Long, attachmentLocalId: String, uploadedUrl: String) = Unit
+    override suspend fun deleteMessage(accountId: Long, messageLocalId: String) = Unit
+    override suspend fun resetSending(accountId: Long) = Unit
+    override suspend fun deleteMessagesForAccount(accountId: Long) = Unit
 }
 
 private class RecordingOutboxDao(
