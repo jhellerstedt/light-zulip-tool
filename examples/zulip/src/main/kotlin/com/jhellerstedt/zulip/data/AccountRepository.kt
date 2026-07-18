@@ -17,28 +17,51 @@ data class StoredZulipAccount(
     val zulipFeatureLevel: Int,
 )
 
+/**
+ * The subset of [AccountRepository] that [com.jhellerstedt.zulip.store.GlobalStore] depends on.
+ * Extracted so tests can substitute a fake without needing a real Room database/DataStore.
+ */
+interface ZulipAccountStore {
+    fun getAllAccounts(): List<StoredZulipAccount>
+    fun getAccount(id: Long): StoredZulipAccount?
+    fun getApiKey(id: Long): String?
+    fun insertAccount(
+        realmUrl: String,
+        realmName: String,
+        email: String,
+        apiKey: String,
+        userId: Int,
+        zulipFeatureLevel: Int,
+    ): StoredZulipAccount
+
+    fun deleteAccount(id: Long): Boolean
+    fun updateAccountMetadata(id: Long, realmName: String, zulipFeatureLevel: Int): StoredZulipAccount
+    suspend fun getActiveAccountId(): Long?
+    suspend fun setActiveAccountId(id: Long?)
+}
+
 class AccountRepository private constructor(
     private val database: ZulipDatabase,
     private val cipher: CredentialCipher,
     private val dataStore: DataStore<Preferences>,
-) {
+) : ZulipAccountStore {
     private val dao = database.accountDao()
 
-    fun getAllAccounts(): List<StoredZulipAccount> =
+    override fun getAllAccounts(): List<StoredZulipAccount> =
         dao.getAllAccounts().map { it.toStored() }
 
-    fun getAccount(id: Long): StoredZulipAccount? =
+    override fun getAccount(id: Long): StoredZulipAccount? =
         dao.getAccount(id)?.toStored()
 
     fun findAccount(realmUrl: String, email: String): StoredZulipAccount? =
         dao.findAccount(realmUrl, email)?.toStored()
 
-    fun getApiKey(id: Long): String? {
+    override fun getApiKey(id: Long): String? {
         val entity = dao.getAccount(id) ?: return null
         return cipher.decrypt(entity.encryptedApiKey)
     }
 
-    fun insertAccount(
+    override fun insertAccount(
         realmUrl: String,
         realmName: String,
         email: String,
@@ -65,9 +88,9 @@ class AccountRepository private constructor(
         return requireNotNull(getAccount(id))
     }
 
-    fun deleteAccount(id: Long): Boolean = dao.deleteAccount(id) > 0
+    override fun deleteAccount(id: Long): Boolean = dao.deleteAccount(id) > 0
 
-    fun updateAccountMetadata(
+    override fun updateAccountMetadata(
         id: Long,
         realmName: String,
         zulipFeatureLevel: Int,
@@ -80,10 +103,10 @@ class AccountRepository private constructor(
     val activeAccountId: Flow<Long?> =
         dataStore.data.map { prefs -> prefs[ACTIVE_ACCOUNT_ID] }
 
-    suspend fun getActiveAccountId(): Long? =
+    override suspend fun getActiveAccountId(): Long? =
         dataStore.data.first()[ACTIVE_ACCOUNT_ID]
 
-    suspend fun setActiveAccountId(id: Long?) {
+    override suspend fun setActiveAccountId(id: Long?) {
         dataStore.edit { prefs ->
             if (id == null) {
                 prefs.remove(ACTIVE_ACCOUNT_ID)

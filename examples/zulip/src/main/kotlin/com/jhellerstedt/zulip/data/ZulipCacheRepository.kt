@@ -12,6 +12,11 @@ import com.jhellerstedt.zulip.store.cacheKey
 import com.jhellerstedt.zulip.store.narrowFromCacheKey
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.time.Duration.Companion.days
 
 data class CachedAccountSnapshot(
@@ -111,18 +116,32 @@ class ZulipCacheRepository(
 
     suspend fun applyEvent(accountId: Long, event: ZulipEvent, conversation: InboxConversation?) {
         val cachedAt = nowMillis()
-        if (event.type == "message" && event.message != null && conversation != null) {
-            dao.upsertMessages(
-                listOf(
-                    CachedMessageEntity(
-                        accountId = accountId,
-                        messageId = event.message.id,
-                        narrowKey = conversation.narrow.cacheKey(),
-                        payloadJson = json.encodeToString(event.message),
-                        cachedAt = cachedAt,
+        when (event.type) {
+            "message" -> if (event.message != null && conversation != null) {
+                dao.upsertMessages(
+                    listOf(
+                        CachedMessageEntity(
+                            accountId = accountId,
+                            messageId = event.message.id,
+                            narrowKey = conversation.narrow.cacheKey(),
+                            payloadJson = json.encodeToString(event.message),
+                            cachedAt = cachedAt,
+                        ),
                     ),
-                ),
-            )
+                )
+            }
+            "update_message_flags" -> if (event.operation == "add" && event.flag == "read") {
+                event.messages.orEmpty().forEach { messageId ->
+                    markCachedMessageRead(accountId, messageId, cachedAt)
+                }
+            }
+            "subscription" -> when (event.op) {
+                "add" -> dao.upsertStreams(event.subscriptions.orEmpty().map { it.toCachedEntity(accountId, cachedAt) })
+                "remove" -> event.subscriptions.orEmpty().forEach { stream ->
+                    dao.deleteStream(accountId, stream.streamId)
+                }
+            }
+            "realm_user" -> persistRealmUserEvent(accountId, event, cachedAt)
         }
         if (conversation != null) {
             val message = event.message
@@ -140,11 +159,57 @@ class ZulipCacheRepository(
                 ),
             )
         }
-        if (event.type == "subscription" && event.op == "add") {
-            dao.upsertStreams(event.subscriptions.orEmpty().map { it.toCachedEntity(accountId, cachedAt) })
-        }
         prune(accountId)
     }
+
+    /** Marks a cached message read in place and recomputes its conversation's unread count. */
+    private suspend fun markCachedMessageRead(accountId: Long, messageId: Int, cachedAt: Long) {
+        val row = dao.messageById(accountId, messageId) ?: return
+        val message = runCatching { json.decodeFromString<ZulipMessage>(row.payloadJson) }.getOrNull() ?: return
+        if (message.flags.contains("read")) return
+        dao.upsertMessages(listOf(row.copy(payloadJson = json.encodeToString(message.copy(flags = message.flags + "read")))))
+        val remainingUnread = dao.messages(accountId, row.narrowKey, MESSAGE_LIMIT).count { candidate ->
+            runCatching { json.decodeFromString<ZulipMessage>(candidate.payloadJson) }
+                .getOrNull()
+                ?.flags
+                ?.contains("read") == false
+        }
+        dao.updateConversationUnreadCount(accountId, row.narrowKey, remainingUnread)
+    }
+
+    /** Mirrors [com.jhellerstedt.zulip.store.ZulipStore]'s realm_user merge semantics for durability. */
+    private suspend fun persistRealmUserEvent(accountId: Long, event: ZulipEvent, cachedAt: Long) {
+        val person = event.person?.jsonObject ?: return
+        val userId = person["user_id"]?.jsonPrimitive?.intOrNull ?: return
+        when (event.op) {
+            "add" -> dao.upsertUsers(listOf(mergeRealmUserEventPerson(accountId, userId, person, dao.userById(accountId, userId), cachedAt)))
+            "update" -> {
+                val existing = dao.userById(accountId, userId)
+                val hasUpdatableField = person.containsKey("full_name") ||
+                    person.containsKey("email") ||
+                    person.containsKey("is_active")
+                if (existing != null || hasUpdatableField) {
+                    dao.upsertUsers(listOf(mergeRealmUserEventPerson(accountId, userId, person, existing, cachedAt)))
+                }
+            }
+            "remove" -> dao.deleteUser(accountId, userId)
+        }
+    }
+
+    private fun mergeRealmUserEventPerson(
+        accountId: Long,
+        userId: Int,
+        person: Map<String, kotlinx.serialization.json.JsonElement>,
+        existing: CachedUserEntity?,
+        updatedAt: Long,
+    ) = CachedUserEntity(
+        accountId = accountId,
+        userId = userId,
+        fullName = person["full_name"]?.jsonPrimitive?.contentOrNull ?: existing?.fullName ?: "User $userId",
+        email = person["email"]?.jsonPrimitive?.contentOrNull ?: existing?.email.orEmpty(),
+        isActive = person["is_active"]?.jsonPrimitive?.booleanOrNull ?: existing?.isActive ?: true,
+        updatedAt = updatedAt,
+    )
 
     suspend fun prune(accountId: Long) {
         dao.deleteMessagesOlderThan(accountId, nowMillis() - 7.days.inWholeMilliseconds)

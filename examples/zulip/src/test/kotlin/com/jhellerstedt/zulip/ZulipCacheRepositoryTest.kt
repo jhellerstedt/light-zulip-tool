@@ -18,6 +18,8 @@ import com.jhellerstedt.zulip.store.Narrow
 import com.jhellerstedt.zulip.store.cacheKey
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -95,6 +97,73 @@ class ZulipCacheRepositoryTest {
         assertEquals(listOf("release"), repository.topics(accountId, 4).map { it.name })
         assertEquals(listOf(12), repository.messages(accountId, Narrow.Topic(4, "release")).map { it.id })
         assertTrue(dao.accountIds.all { it == accountId })
+    }
+
+    @Test
+    fun applyEventPersistsReadFlagAndRecomputesConversationUnreadCount() = runBlocking {
+        val dao = FakeCacheDao()
+        val repository = ZulipCacheRepository(dao, nowMillis = { now })
+        val accountId = 7L
+        val narrow = Narrow.Topic(4, "release")
+        dao.messageRows += CachedMessageEntity(accountId, 12, narrow.cacheKey(), Json.encodeToString(message(12)), now)
+        dao.messageRows += CachedMessageEntity(accountId, 13, narrow.cacheKey(), Json.encodeToString(message(13)), now)
+        dao.conversationRows += CachedConversationEntity(accountId, narrow.cacheKey(), "Mobile > release", 2, 13, 13, now)
+
+        repository.applyEvent(
+            accountId,
+            ZulipEvent(type = "update_message_flags", operation = "add", flag = "read", messages = listOf(12)),
+            conversation = null,
+        )
+
+        val persisted = dao.messageRows.single { it.messageId == 12 }
+        assertTrue(Json.decodeFromString<ZulipMessage>(persisted.payloadJson).flags.contains("read"))
+        assertEquals(1, dao.conversationRows.single { it.narrowKey == narrow.cacheKey() }.unreadCount)
+    }
+
+    @Test
+    fun applyEventRemovesUnsubscribedStreamFromCache() = runBlocking {
+        val dao = FakeCacheDao()
+        val repository = ZulipCacheRepository(dao, nowMillis = { now })
+        val accountId = 7L
+        dao.streamRows += CachedStreamEntity(accountId, 4, "mobile", "", false, now)
+
+        repository.applyEvent(
+            accountId,
+            ZulipEvent(type = "subscription", op = "remove", subscriptions = listOf(ZulipStream("mobile", 4, "", false))),
+            conversation = null,
+        )
+
+        assertTrue(dao.streamRows.none { it.accountId == accountId && it.streamId == 4 })
+    }
+
+    @Test
+    fun applyEventPersistsRealmUserAddAndUpdateAndRemove() = runBlocking {
+        val dao = FakeCacheDao()
+        val repository = ZulipCacheRepository(dao, nowMillis = { now })
+        val accountId = 7L
+
+        repository.applyEvent(
+            accountId,
+            ZulipEvent(type = "realm_user", op = "add", person = realmUserPerson(9, "Ada", "ada@example.com", true)),
+            conversation = null,
+        )
+        assertEquals(listOf("Ada"), dao.userRows.filter { it.accountId == accountId }.map { it.fullName })
+
+        repository.applyEvent(
+            accountId,
+            ZulipEvent(type = "realm_user", op = "update", person = realmUserPersonPartial(9, isActive = false)),
+            conversation = null,
+        )
+        val updated = dao.userRows.single { it.accountId == accountId && it.userId == 9 }
+        assertEquals("Ada", updated.fullName)
+        assertEquals(false, updated.isActive)
+
+        repository.applyEvent(
+            accountId,
+            ZulipEvent(type = "realm_user", op = "remove", person = realmUserPersonPartial(9)),
+            conversation = null,
+        )
+        assertTrue(dao.userRows.none { it.accountId == accountId && it.userId == 9 })
     }
 
     @Test
@@ -180,6 +249,25 @@ class ZulipCacheRepositoryTest {
         topic = "release",
         timestamp = id.toLong(),
     )
+
+    private fun realmUserPerson(userId: Int, fullName: String, email: String, isActive: Boolean) = buildJsonObject {
+        put("user_id", userId)
+        put("full_name", fullName)
+        put("email", email)
+        put("is_active", isActive)
+    }
+
+    private fun realmUserPersonPartial(
+        userId: Int,
+        fullName: String? = null,
+        email: String? = null,
+        isActive: Boolean? = null,
+    ) = buildJsonObject {
+        put("user_id", userId)
+        fullName?.let { put("full_name", it) }
+        email?.let { put("email", it) }
+        isActive?.let { put("is_active", it) }
+    }
 }
 
 private class FakeCacheDao : ZulipCacheDao {
@@ -199,6 +287,11 @@ private class FakeCacheDao : ZulipCacheDao {
     override suspend fun users(accountId: Long): List<CachedUserEntity> {
         accountIds += accountId
         return userRows.filter { it.accountId == accountId }
+    }
+
+    override suspend fun userById(accountId: Long, userId: Int): CachedUserEntity? {
+        accountIds += accountId
+        return userRows.firstOrNull { it.accountId == accountId && it.userId == userId }
     }
 
     override suspend fun topics(accountId: Long, streamId: Int): List<CachedTopicEntity> {
@@ -222,6 +315,11 @@ private class FakeCacheDao : ZulipCacheDao {
     override suspend fun messageNarrowKeys(accountId: Long): List<String> {
         accountIds += accountId
         return messageRows.filter { it.accountId == accountId }.map { it.narrowKey }.distinct()
+    }
+
+    override suspend fun messageById(accountId: Long, messageId: Int): CachedMessageEntity? {
+        accountIds += accountId
+        return messageRows.firstOrNull { it.accountId == accountId && it.messageId == messageId }
     }
 
     override suspend fun upsertStreams(rows: List<CachedStreamEntity>) {
@@ -284,6 +382,24 @@ private class FakeCacheDao : ZulipCacheDao {
     override suspend fun deleteConversations(accountId: Long) {
         accountIds += accountId
         conversationRows.removeAll { it.accountId == accountId }
+    }
+
+    override suspend fun deleteStream(accountId: Long, streamId: Int) {
+        accountIds += accountId
+        streamRows.removeAll { it.accountId == accountId && it.streamId == streamId }
+    }
+
+    override suspend fun deleteUser(accountId: Long, userId: Int) {
+        accountIds += accountId
+        userRows.removeAll { it.accountId == accountId && it.userId == userId }
+    }
+
+    override suspend fun updateConversationUnreadCount(accountId: Long, narrowKey: String, unreadCount: Int) {
+        accountIds += accountId
+        val index = conversationRows.indexOfFirst { it.accountId == accountId && it.narrowKey == narrowKey }
+        if (index >= 0) {
+            conversationRows[index] = conversationRows[index].copy(unreadCount = unreadCount)
+        }
     }
 
     override suspend fun deleteMessages(accountId: Long, narrowKey: String) {

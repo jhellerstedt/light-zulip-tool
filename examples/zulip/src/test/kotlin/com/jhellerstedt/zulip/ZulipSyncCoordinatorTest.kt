@@ -416,6 +416,9 @@ private class FakeSyncCacheDao : ZulipCacheDao {
     override suspend fun users(accountId: Long): List<CachedUserEntity> =
         userRows.filter { it.accountId == accountId }
 
+    override suspend fun userById(accountId: Long, userId: Int): CachedUserEntity? =
+        userRows.firstOrNull { it.accountId == accountId && it.userId == userId }
+
     override suspend fun topics(accountId: Long, streamId: Int): List<CachedTopicEntity> =
         topicRows.filter { it.accountId == accountId && it.streamId == streamId }
 
@@ -430,6 +433,9 @@ private class FakeSyncCacheDao : ZulipCacheDao {
 
     override suspend fun messageNarrowKeys(accountId: Long): List<String> =
         messageRows.filter { it.accountId == accountId }.map { it.narrowKey }.distinct()
+
+    override suspend fun messageById(accountId: Long, messageId: Int): CachedMessageEntity? =
+        messageRows.firstOrNull { it.accountId == accountId && it.messageId == messageId }
 
     override suspend fun upsertStreams(rows: List<CachedStreamEntity>) {
         failOnUpsertStreams?.let { throw it }
@@ -486,6 +492,21 @@ private class FakeSyncCacheDao : ZulipCacheDao {
 
     override suspend fun deleteConversations(accountId: Long) {
         conversationRows.removeAll { it.accountId == accountId }
+    }
+
+    override suspend fun deleteStream(accountId: Long, streamId: Int) {
+        streamRows.removeAll { it.accountId == accountId && it.streamId == streamId }
+    }
+
+    override suspend fun deleteUser(accountId: Long, userId: Int) {
+        userRows.removeAll { it.accountId == accountId && it.userId == userId }
+    }
+
+    override suspend fun updateConversationUnreadCount(accountId: Long, narrowKey: String, unreadCount: Int) {
+        val index = conversationRows.indexOfFirst { it.accountId == accountId && it.narrowKey == narrowKey }
+        if (index >= 0) {
+            conversationRows[index] = conversationRows[index].copy(unreadCount = unreadCount)
+        }
     }
 
     override suspend fun deleteMessages(accountId: Long, narrowKey: String) {

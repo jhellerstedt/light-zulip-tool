@@ -4,8 +4,8 @@ import com.jhellerstedt.zulip.api.DefaultZulipGateway
 import com.jhellerstedt.zulip.api.ZulipApiException
 import com.jhellerstedt.zulip.api.ZulipClient
 import com.jhellerstedt.zulip.api.ZulipGateway
-import com.jhellerstedt.zulip.data.AccountRepository
 import com.jhellerstedt.zulip.data.StoredZulipAccount
+import com.jhellerstedt.zulip.data.ZulipAccountStore
 import com.jhellerstedt.zulip.data.ZulipCacheRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,11 +31,11 @@ fun shouldReregisterEventQueue(error: Throwable): Boolean {
 }
 
 class GlobalStore(
-    private val accountRepository: AccountRepository,
+    private val accountRepository: ZulipAccountStore,
     private val cacheRepository: ZulipCacheRepository,
     private val gateway: ZulipGateway = DefaultZulipGateway(),
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val coordinator = ZulipSyncCoordinator(
         gateway = gateway,
         cache = cacheRepository,
@@ -152,7 +152,15 @@ class GlobalStore(
         if (hydration.hasCachedState) {
             scope.launch {
                 coordinator.register(store)
-                    .onSuccess { poller.start(store) }
+                    .onSuccess {
+                        // The account may have been switched away from again while this
+                        // background register was in flight; only (re)start the poller if
+                        // `store` is still the active one, otherwise this would silently
+                        // hijack the poller back onto a stale/previous account.
+                        if (_activeStore.value === store) {
+                            poller.start(store)
+                        }
+                    }
             }
         } else {
             coordinator.register(store).getOrThrow()

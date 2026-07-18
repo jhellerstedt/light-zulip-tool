@@ -14,6 +14,9 @@ interface ZulipCacheDao {
     @Query("SELECT * FROM cached_users WHERE account_id = :accountId ORDER BY full_name COLLATE NOCASE")
     suspend fun users(accountId: Long): List<CachedUserEntity>
 
+    @Query("SELECT * FROM cached_users WHERE account_id = :accountId AND user_id = :userId LIMIT 1")
+    suspend fun userById(accountId: Long, userId: Int): CachedUserEntity?
+
     @Query("SELECT * FROM cached_topics WHERE account_id = :accountId AND stream_id = :streamId ORDER BY max_message_id DESC")
     suspend fun topics(accountId: Long, streamId: Int): List<CachedTopicEntity>
 
@@ -28,6 +31,9 @@ interface ZulipCacheDao {
 
     @Query("SELECT DISTINCT narrow_key FROM cached_messages WHERE account_id = :accountId")
     suspend fun messageNarrowKeys(accountId: Long): List<String>
+
+    @Query("SELECT * FROM cached_messages WHERE account_id = :accountId AND message_id = :messageId LIMIT 1")
+    suspend fun messageById(accountId: Long, messageId: Int): CachedMessageEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertStreams(rows: List<CachedStreamEntity>)
@@ -55,6 +61,18 @@ interface ZulipCacheDao {
 
     @Query("DELETE FROM cached_conversations WHERE account_id = :accountId")
     suspend fun deleteConversations(accountId: Long)
+
+    @Query("DELETE FROM cached_streams WHERE account_id = :accountId AND stream_id = :streamId")
+    suspend fun deleteStream(accountId: Long, streamId: Int)
+
+    @Query("DELETE FROM cached_users WHERE account_id = :accountId AND user_id = :userId")
+    suspend fun deleteUser(accountId: Long, userId: Int)
+
+    @Query(
+        "UPDATE cached_conversations SET unread_count = :unreadCount " +
+            "WHERE account_id = :accountId AND narrow_key = :narrowKey",
+    )
+    suspend fun updateConversationUnreadCount(accountId: Long, narrowKey: String, unreadCount: Int)
 
     @Query("DELETE FROM cached_messages WHERE account_id = :accountId AND narrow_key = :narrowKey")
     suspend fun deleteMessages(accountId: Long, narrowKey: String)
