@@ -16,20 +16,47 @@ interface OutboxFileStore {
 
 class FileOutboxFileStore(
     private val filesDir: File,
+    internal val copyToTarget: (source: File, target: File) -> Unit = { source, target ->
+        source.copyTo(target, overwrite = true)
+    },
 ) : OutboxFileStore {
     override fun copyIn(accountId: Long, messageId: String, attachmentId: String, source: File): File {
         val target = File(filesDir, "zulip-outbox/$accountId/$messageId/$attachmentId")
         target.parentFile?.mkdirs()
-        source.copyTo(target, overwrite = true)
+        try {
+            copyToTarget(source, target)
+        } catch (e: Exception) {
+            deleteCopiedFile(target)
+            throw e
+        }
         return target
     }
 
     override fun delete(file: File) {
-        file.delete()
+        deleteCopiedFile(file)
     }
 
     override fun deleteAccount(accountId: Long) {
         File(filesDir, "zulip-outbox/$accountId").deleteRecursively()
+    }
+
+    private fun outboxRoot(): File = File(filesDir, "zulip-outbox")
+
+    private fun deleteCopiedFile(file: File) {
+        file.delete()
+        deleteEmptyParentDirectories(file.parentFile, outboxRoot())
+    }
+
+    private fun deleteEmptyParentDirectories(dir: File?, stopAt: File) {
+        var current = dir
+        while (current != null && current != stopAt && current.exists()) {
+            if (current.list()?.isNotEmpty() == true) {
+                break
+            }
+            val parent = current.parentFile
+            current.delete()
+            current = parent
+        }
     }
 }
 

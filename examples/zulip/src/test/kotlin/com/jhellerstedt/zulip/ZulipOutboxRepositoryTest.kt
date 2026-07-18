@@ -1,5 +1,6 @@
 package com.jhellerstedt.zulip
 
+import com.jhellerstedt.zulip.data.FileOutboxFileStore
 import com.jhellerstedt.zulip.data.OutboxFileStore
 import com.jhellerstedt.zulip.data.OutboxMessageState
 import com.jhellerstedt.zulip.data.PendingAttachmentEntity
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -46,6 +48,39 @@ class ZulipOutboxRepositoryTest {
         val attachment = dao.attachments.single()
         assertEquals("photo", File(attachment.filePath).readText())
         assertTrue(File(attachment.filePath).path.startsWith(root.resolve("zulip-outbox/$accountId/message-1").path))
+    }
+
+    @Test
+    fun midCopyFailureRemovesPartialFileAndLeavesNoDaoRows() = runTest {
+        val dao = FakeOutboxDao()
+        val root = temporaryDirectory()
+        val first = root.resolve("first.jpg").apply { writeText("first") }
+        val second = root.resolve("second.jpg").apply { writeText("second") }
+        var copyCalls = 0
+        val files = FileOutboxFileStore(root) { source, target ->
+            copyCalls += 1
+            if (copyCalls == 2) {
+                target.outputStream().use { it.write("partial".toByteArray()) }
+                throw IOException("copy failed mid-way")
+            }
+            source.copyTo(target, overwrite = true)
+        }
+        val repository = repository(dao, root, files)
+
+        val result = repository.enqueue(
+            accountId,
+            Narrow.Channel(1),
+            "caption",
+            listOf(
+                PendingUploadAttachment("first.jpg", "image/jpeg", first),
+                PendingUploadAttachment("second.jpg", "image/jpeg", second),
+            ),
+        )
+
+        assertIs<IOException>(result.exceptionOrNull())
+        assertTrue(dao.messages.isEmpty())
+        assertTrue(dao.attachments.isEmpty())
+        assertNoOutboxFiles(root)
     }
 
     @Test
@@ -212,7 +247,7 @@ class ZulipOutboxRepositoryTest {
     private fun repository(
         dao: FakeOutboxDao,
         root: File,
-        files: RecordingFileStore = RecordingFileStore(root),
+        files: OutboxFileStore = RecordingFileStore(root),
     ): ZulipOutboxRepository {
         var nextId = 0
         return ZulipOutboxRepository(
@@ -224,6 +259,17 @@ class ZulipOutboxRepositoryTest {
     }
 
     private fun temporaryDirectory(): File = Files.createTempDirectory("zulip-outbox-test").toFile()
+
+    private fun assertNoOutboxFiles(root: File) {
+        val outboxRoot = root.resolve("zulip-outbox")
+        if (!outboxRoot.exists()) {
+            return
+        }
+        assertTrue(
+            outboxRoot.walkTopDown().none { it.isFile },
+            "expected no files under ${outboxRoot.path}, found orphaned outbox files",
+        )
+    }
 }
 
 private class RecordingFileStore(
