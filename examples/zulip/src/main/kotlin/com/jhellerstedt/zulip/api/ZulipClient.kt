@@ -3,6 +3,7 @@ package com.jhellerstedt.zulip.api
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.basicAuth
@@ -20,9 +21,11 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.Parameters
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.io.IOException
 
 class ZulipClient(
     private val realmUrl: String,
@@ -60,16 +63,18 @@ class ZulipClient(
                 "${encode(key)}=${encode(value)}"
             }
         }
-        val response = client.get("$apiBase/$path$query") {
-            if (authenticated) {
-                requireNotNull(email)
-                requireNotNull(apiKey)
-                basicAuth(email, apiKey)
-            }
-            header(HttpHeaders.UserAgent, USER_AGENT)
-            if (socketTimeoutMillis != null) {
-                timeout {
-                    this.socketTimeoutMillis = socketTimeoutMillis
+        val response = networkRequest {
+            client.get("$apiBase/$path$query") {
+                if (authenticated) {
+                    requireNotNull(email)
+                    requireNotNull(apiKey)
+                    basicAuth(email, apiKey)
+                }
+                header(HttpHeaders.UserAgent, USER_AGENT)
+                if (socketTimeoutMillis != null) {
+                    timeout {
+                        this.socketTimeoutMillis = socketTimeoutMillis
+                    }
                 }
             }
         }
@@ -81,17 +86,19 @@ class ZulipClient(
         formParams: Map<String, String> = emptyMap(),
         authenticated: Boolean = isAuthenticated,
     ): String {
-        val response = client.post("$apiBase/$path") {
-            if (authenticated) {
-                requireNotNull(email)
-                requireNotNull(apiKey)
-                basicAuth(email, apiKey)
+        val response = networkRequest {
+            client.post("$apiBase/$path") {
+                if (authenticated) {
+                    requireNotNull(email)
+                    requireNotNull(apiKey)
+                    basicAuth(email, apiKey)
+                }
+                header(HttpHeaders.UserAgent, USER_AGENT)
+                contentType(ContentType.Application.FormUrlEncoded)
+                setBody(FormDataContent(Parameters.build {
+                    formParams.forEach { (key, value) -> append(key, value) }
+                }))
             }
-            header(HttpHeaders.UserAgent, USER_AGENT)
-            contentType(ContentType.Application.FormUrlEncoded)
-            setBody(FormDataContent(Parameters.build {
-                formParams.forEach { (key, value) -> append(key, value) }
-            }))
         }
         return parseResponse(response.status.value, response.bodyAsText())
     }
@@ -104,33 +111,46 @@ class ZulipClient(
         bytes: ByteArray,
         authenticated: Boolean = isAuthenticated,
     ): String {
-        val response = client.post("$apiBase/$path") {
-            if (authenticated) {
-                requireNotNull(email)
-                requireNotNull(apiKey)
-                basicAuth(email, apiKey)
+        val response = networkRequest {
+            client.post("$apiBase/$path") {
+                if (authenticated) {
+                    requireNotNull(email)
+                    requireNotNull(apiKey)
+                    basicAuth(email, apiKey)
+                }
+                header(HttpHeaders.UserAgent, USER_AGENT)
+                setBody(
+                    MultiPartFormDataContent(
+                        formData {
+                            append(
+                                key = fileFieldName,
+                                value = bytes,
+                                headers = Headers.build {
+                                    append(HttpHeaders.ContentType, mimeType)
+                                    append(
+                                        HttpHeaders.ContentDisposition,
+                                        "form-data; name=\"$fileFieldName\"; filename=\"$fileName\"",
+                                    )
+                                },
+                            )
+                        },
+                    ),
+                )
             }
-            header(HttpHeaders.UserAgent, USER_AGENT)
-            setBody(
-                MultiPartFormDataContent(
-                    formData {
-                        append(
-                            key = fileFieldName,
-                            value = bytes,
-                            headers = Headers.build {
-                                append(HttpHeaders.ContentType, mimeType)
-                                append(
-                                    HttpHeaders.ContentDisposition,
-                                    "form-data; name=\"$fileFieldName\"; filename=\"$fileName\"",
-                                )
-                            },
-                        )
-                    },
-                ),
-            )
         }
         return parseResponse(response.status.value, response.bodyAsText())
     }
+
+    private suspend fun <T> networkRequest(block: suspend () -> T): T =
+        try {
+            block()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: HttpRequestTimeoutException) {
+            throw ZulipApiException.Network(error.message ?: "HTTP request timed out", error)
+        } catch (error: IOException) {
+            throw ZulipApiException.Network(error.message ?: "Network request failed", error)
+        }
 
     private fun parseResponse(statusCode: Int, body: String): String {
         val root = runCatching { json.parseToJsonElement(body).jsonObject }
@@ -140,7 +160,7 @@ class ZulipClient(
         if (statusCode !in 200..299 || result == "error") {
             val code = root["code"]?.jsonPrimitive?.content
             val msg = root["msg"]?.jsonPrimitive?.content ?: "HTTP $statusCode"
-            throw ZulipApiException.ApiError(code, msg)
+            throw ZulipApiException.ApiError(statusCode, code, msg)
         }
         return body
     }

@@ -11,6 +11,7 @@ class RegisterCompatibilityTest {
     @Test
     fun detectsIdleQueueTimeoutCompatibilityError() {
         val error = ZulipApiException.ApiError(
+            statusCode = 400,
             code = "BAD_REQUEST",
             message = "\"idle_queue_timeout\" is not valid JSON",
         )
@@ -21,6 +22,7 @@ class RegisterCompatibilityTest {
     @Test
     fun ignoresOtherApiErrors() {
         val error = ZulipApiException.ApiError(
+            statusCode = 400,
             code = "BAD_REQUEST",
             message = "Invalid channel ID",
         )
@@ -31,6 +33,7 @@ class RegisterCompatibilityTest {
     @Test
     fun detectsStaleEventQueueError() {
         val error = ZulipApiException.ApiError(
+            statusCode = 400,
             code = "BAD_EVENT_QUEUE_ID",
             message = "Bad event queue ID: 06b944fd-cb5b-4119-a0f5-b5b105d1ecd2",
         )
@@ -41,6 +44,7 @@ class RegisterCompatibilityTest {
     @Test
     fun ignoresUnrelatedApiErrorsForEventQueueReregistration() {
         val error = ZulipApiException.ApiError(
+            statusCode = 400,
             code = "BAD_REQUEST",
             message = "Invalid channel ID",
         )

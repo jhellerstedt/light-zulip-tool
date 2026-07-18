@@ -172,6 +172,7 @@ class ZulipSyncCoordinatorTest {
         val cache = ZulipCacheRepository(dao, nowMillis = { now })
         val gateway = FakeZulipGateway()
         gateway.registerFailureOnce = com.jhellerstedt.zulip.api.ZulipApiException.ApiError(
+            statusCode = 400,
             code = "BAD_REQUEST",
             message = "\"idle_queue_timeout\" is not valid JSON",
         )
