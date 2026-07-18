@@ -3,46 +3,68 @@ package com.jhellerstedt.zulip.ui
 import androidx.lifecycle.viewModelScope
 import com.thelightphone.sdk.LightViewModel
 import com.jhellerstedt.zulip.api.models.ZulipTopic
+import com.jhellerstedt.zulip.store.ConnectionState
 import com.jhellerstedt.zulip.store.GlobalStore
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 data class TopicListUiState(
     val title: String = "",
     val topics: List<ZulipTopic> = emptyList(),
-    val isLoading: Boolean = false,
+    val isRefreshing: Boolean = false,
+    val connectionState: ConnectionState = ConnectionState.REFRESHING,
     val errorMessage: String? = null,
 )
 
-class TopicListViewModel(
-    private val globalStore: GlobalStore,
+class TopicListViewModel internal constructor(
     private val streamId: Int,
     streamName: String,
+    private val cachedTopics: suspend () -> List<ZulipTopic>,
+    private val refreshTopics: suspend () -> Result<List<ZulipTopic>>,
+    private val connectionState: () -> ConnectionState? = { null },
 ) : LightViewModel<Unit>() {
+    constructor(globalStore: GlobalStore, streamId: Int, streamName: String) : this(
+        streamId = streamId,
+        streamName = streamName,
+        cachedTopics = { globalStore.loadTopics(streamId) },
+        refreshTopics = { globalStore.refreshTopics(streamId) },
+        connectionState = { globalStore.activeStore.value?.connectionState?.value },
+    )
+
     private val _uiState = MutableStateFlow(TopicListUiState(title = streamName))
     val uiState: StateFlow<TopicListUiState> = _uiState.asStateFlow()
 
     fun loadTopics() {
-        val store = globalStore.activeStore.value ?: return
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            withContext(Dispatchers.IO) {
-                store.loadTopics(streamId)
-            }.onSuccess { topics ->
-                _uiState.update { it.copy(topics = topics, isLoading = false) }
-            }.onFailure { error ->
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        errorMessage = error.message ?: "Failed to load topics",
-                    )
+            _uiState.update { it.copy(isRefreshing = true, errorMessage = null) }
+            val cached = cachedTopics()
+            _uiState.update { it.copy(topics = cached) }
+            refreshTopics()
+                .onSuccess { topics ->
+                    _uiState.update {
+                        it.copy(
+                            topics = topics,
+                            isRefreshing = false,
+                            connectionState = ConnectionState.ONLINE,
+                        )
+                    }
                 }
-            }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            isRefreshing = false,
+                            connectionState = connectionState() ?: ConnectionState.OFFLINE,
+                            errorMessage = if (cached.isEmpty()) {
+                                error.message ?: "Failed to load topics"
+                            } else {
+                                null
+                            },
+                        )
+                    }
+                }
         }
     }
 

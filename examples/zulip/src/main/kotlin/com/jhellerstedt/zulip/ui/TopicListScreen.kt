@@ -27,6 +27,7 @@ import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 import com.jhellerstedt.zulip.ZulipServices
+import com.jhellerstedt.zulip.store.ConnectionState
 import com.jhellerstedt.zulip.store.Narrow
 
 class TopicListScreen(
@@ -62,9 +63,15 @@ class TopicListScreen(
                         modifier = Modifier.padding(bottom = 0.5f.gridUnitsAsDp()),
                     )
 
-                    if (state.isLoading) {
+                    val statusText = when {
+                        state.connectionState == ConnectionState.OFFLINE -> "Offline — showing saved data"
+                        state.isRefreshing && state.topics.isNotEmpty() -> "Refreshing…"
+                        state.isRefreshing -> "Loading topics…"
+                        else -> null
+                    }
+                    statusText?.let { text ->
                         LightText(
-                            text = "Loading topics…",
+                            text = text,
                             variant = LightTextVariant.Copy,
                             modifier = Modifier.padding(horizontal = 1f.gridUnitsAsDp()),
                         )
@@ -76,7 +83,7 @@ class TopicListScreen(
                             .fillMaxWidth()
                             .padding(horizontal = 1f.gridUnitsAsDp()),
                     ) {
-                        if (state.topics.isEmpty() && !state.isLoading) {
+                        if (state.topics.isEmpty() && !state.isRefreshing) {
                             LightText(
                                 text = "No topics",
                                 variant = LightTextVariant.Copy,

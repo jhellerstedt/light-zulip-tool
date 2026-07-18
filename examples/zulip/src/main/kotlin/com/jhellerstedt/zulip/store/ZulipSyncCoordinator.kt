@@ -1,5 +1,6 @@
 package com.jhellerstedt.zulip.store
 
+import com.jhellerstedt.zulip.api.ZulipApiException
 import com.jhellerstedt.zulip.api.ZulipGateway
 import com.jhellerstedt.zulip.api.models.RegisterQueueResponse
 import com.jhellerstedt.zulip.api.models.ZulipEvent
@@ -8,6 +9,7 @@ import com.jhellerstedt.zulip.api.models.ZulipTopic
 import com.jhellerstedt.zulip.data.StoredZulipAccount
 import com.jhellerstedt.zulip.data.ZulipCacheRepository
 import kotlinx.coroutines.CancellationException
+import java.io.IOException
 
 /**
  * Hydrates [ZulipStore] instances from the persistent cache and reconciles them
@@ -44,22 +46,47 @@ class ZulipSyncCoordinator(
         }
     }
 
-    suspend fun refreshMessages(store: ZulipStore, narrow: Narrow): Result<List<ZulipMessage>> = runCatching {
-        val response = gateway.messages(store.client, narrow)
-        val sorted = response.messages.sortedBy { it.id }
-        cache.replaceMessages(store.account.id, narrow, sorted)
-        store.applyMessages(narrow, sorted)
-        sorted
+    suspend fun cachedMessages(store: ZulipStore, narrow: Narrow): List<ZulipMessage> =
+        cache.messages(store.account.id, narrow)
+
+    suspend fun refreshMessages(store: ZulipStore, narrow: Narrow): Result<List<ZulipMessage>> {
+        store.setConnectionState(ConnectionState.REFRESHING)
+        return try {
+            val response = gateway.messages(store.client, narrow)
+            val sorted = response.messages.sortedBy { it.id }
+            cache.replaceMessages(store.account.id, narrow, sorted)
+            store.applyMessages(narrow, sorted)
+            store.setConnectionState(ConnectionState.ONLINE)
+            Result.success(sorted)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            if (error.isTransientTransportFailure()) {
+                store.setConnectionState(ConnectionState.OFFLINE)
+            }
+            Result.failure(error)
+        }
     }
 
     suspend fun cachedTopics(store: ZulipStore, streamId: Int): List<ZulipTopic> =
         cache.topics(store.account.id, streamId)
 
-    suspend fun refreshTopics(store: ZulipStore, streamId: Int): Result<List<ZulipTopic>> = runCatching {
-        val response = gateway.topics(store.client, streamId)
-        val topics = response.topics.sortedByDescending { it.maxId }
-        cache.replaceTopics(store.account.id, streamId, topics)
-        topics
+    suspend fun refreshTopics(store: ZulipStore, streamId: Int): Result<List<ZulipTopic>> {
+        store.setConnectionState(ConnectionState.REFRESHING)
+        return try {
+            val response = gateway.topics(store.client, streamId)
+            val topics = response.topics.sortedByDescending { it.maxId }
+            cache.replaceTopics(store.account.id, streamId, topics)
+            store.setConnectionState(ConnectionState.ONLINE)
+            Result.success(topics)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            if (error.isTransientTransportFailure()) {
+                store.setConnectionState(ConnectionState.OFFLINE)
+            }
+            Result.failure(error)
+        }
     }
 
     suspend fun applyEvent(store: ZulipStore, event: ZulipEvent) {
@@ -111,4 +138,7 @@ class ZulipSyncCoordinator(
         }
         return conversations
     }
+
+    private fun Throwable.isTransientTransportFailure(): Boolean =
+        this is ZulipApiException.Network || this is IOException
 }

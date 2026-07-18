@@ -27,6 +27,7 @@ import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.jhellerstedt.zulip.ZulipServices
+import com.jhellerstedt.zulip.store.ConnectionState
 import com.jhellerstedt.zulip.store.Narrow
 import com.jhellerstedt.zulip.util.formatTimestamp
 import com.jhellerstedt.zulip.util.stripHtml
@@ -70,9 +71,15 @@ class MessageListScreen(
                         modifier = Modifier.padding(bottom = 0.5f.gridUnitsAsDp()),
                     )
 
-                    if (state.isLoading) {
+                    val statusText = when {
+                        state.connectionState == ConnectionState.OFFLINE -> "Offline — showing saved data"
+                        state.isRefreshing && state.messages.isNotEmpty() -> "Refreshing…"
+                        state.isRefreshing -> "Loading messages…"
+                        else -> null
+                    }
+                    statusText?.let { text ->
                         LightText(
-                            text = "Loading messages…",
+                            text = text,
                             variant = LightTextVariant.Copy,
                             modifier = Modifier.padding(horizontal = 1f.gridUnitsAsDp()),
                         )

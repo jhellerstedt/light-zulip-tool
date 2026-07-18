@@ -3,34 +3,48 @@ package com.jhellerstedt.zulip.ui
 import androidx.lifecycle.viewModelScope
 import com.thelightphone.sdk.LightViewModel
 import com.jhellerstedt.zulip.api.models.ZulipMessage
+import com.jhellerstedt.zulip.store.ConnectionState
 import com.jhellerstedt.zulip.store.GlobalStore
 import com.jhellerstedt.zulip.store.Narrow
-import kotlinx.coroutines.Dispatchers
+import com.jhellerstedt.zulip.store.ZulipStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 data class MessageListUiState(
     val title: String = "",
     val messages: List<ZulipMessage> = emptyList(),
     val authorNamesByMessageId: Map<Int, String> = emptyMap(),
     val initialScrollIndex: Int = -1,
-    val isLoading: Boolean = false,
+    val isRefreshing: Boolean = false,
+    val connectionState: ConnectionState = ConnectionState.REFRESHING,
     val errorMessage: String? = null,
 )
 
-class MessageListViewModel(
-    private val globalStore: GlobalStore,
+class MessageListViewModel internal constructor(
     private val narrow: Narrow,
+    private val cachedMessages: suspend () -> List<ZulipMessage>,
+    private val refreshMessages: suspend () -> Result<List<ZulipMessage>>,
+    private val markRead: suspend () -> Unit,
+    private val storeSnapshot: () -> ZulipStore? = { null },
+    private val connectionState: () -> ConnectionState? = { null },
 ) : LightViewModel<Unit>() {
+    constructor(globalStore: GlobalStore, narrow: Narrow) : this(
+        narrow = narrow,
+        cachedMessages = { globalStore.loadMessages(narrow) },
+        refreshMessages = { globalStore.refreshMessages(narrow) },
+        markRead = { globalStore.activeStore.value?.markNarrowRead(narrow) },
+        storeSnapshot = { globalStore.activeStore.value },
+        connectionState = { globalStore.activeStore.value?.connectionState?.value },
+    )
+
     private val _uiState = MutableStateFlow(MessageListUiState())
     val uiState: StateFlow<MessageListUiState> = _uiState.asStateFlow()
 
     init {
-        val store = globalStore.activeStore.value
+        val store = storeSnapshot()
         val streamNames = store?.streamsList?.value?.associate { it.streamId to it.name }.orEmpty()
         val userNames = when (narrow) {
             is Narrow.Dm -> narrow.userIds.mapNotNull { id ->
@@ -44,42 +58,56 @@ class MessageListViewModel(
     }
 
     fun loadMessages() {
-        val store = globalStore.activeStore.value ?: return
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            withContext(Dispatchers.IO) {
-                store.loadMessages(narrow)
-            }.onSuccess { messages ->
-                val streamNames = store.streamsList.value.associate { it.streamId to it.name }
-                val allUserNames = store.userNames()
-                val titleUserNames = when (narrow) {
-                    is Narrow.Dm -> narrow.userIds.mapNotNull { id ->
-                        store.userName(id)?.let { id to it }
-                    }.toMap()
-                    else -> emptyMap()
+            _uiState.update { it.copy(isRefreshing = true, errorMessage = null) }
+            val cached = cachedMessages()
+            publishMessages(cached)
+            refreshMessages()
+                .onSuccess { messages ->
+                    publishMessages(messages)
+                    _uiState.update {
+                        it.copy(
+                            isRefreshing = false,
+                            connectionState = ConnectionState.ONLINE,
+                        )
+                    }
+                    markRead()
                 }
-                _uiState.update {
-                    it.copy(
-                        messages = messages,
-                        authorNamesByMessageId = messages.associate { message ->
-                            message.id to messageAuthorName(message, allUserNames)
-                        },
-                        initialScrollIndex = initialMessageScrollIndex(messages),
-                        title = narrow.displayTitle(streamNames, titleUserNames),
-                        isLoading = false,
-                    )
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            isRefreshing = false,
+                            connectionState = connectionState() ?: ConnectionState.OFFLINE,
+                            errorMessage = if (cached.isEmpty()) {
+                                error.message ?: "Failed to load messages"
+                            } else {
+                                null
+                            },
+                        )
+                    }
                 }
-                withContext(Dispatchers.IO) {
-                    store.markNarrowRead(narrow)
-                }
-            }.onFailure { error ->
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        errorMessage = error.message ?: "Failed to load messages",
-                    )
-                }
-            }
+        }
+    }
+
+    private fun publishMessages(messages: List<ZulipMessage>) {
+        val store = storeSnapshot()
+        val streamNames = store?.streamsList?.value?.associate { it.streamId to it.name }.orEmpty()
+        val allUserNames = store?.userNames().orEmpty()
+        val titleUserNames = when (narrow) {
+            is Narrow.Dm -> narrow.userIds.mapNotNull { id ->
+                store?.userName(id)?.let { id to it }
+            }.toMap()
+            else -> emptyMap()
+        }
+        _uiState.update {
+            it.copy(
+                messages = messages,
+                authorNamesByMessageId = messages.associate { message ->
+                    message.id to messageAuthorName(message, allUserNames)
+                },
+                initialScrollIndex = initialMessageScrollIndex(messages),
+                title = narrow.displayTitle(streamNames, titleUserNames),
+            )
         }
     }
 

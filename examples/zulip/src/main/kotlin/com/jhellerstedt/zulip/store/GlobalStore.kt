@@ -63,6 +63,26 @@ class GlobalStore(
 
     var selectedNarrow: Narrow? = null
 
+    suspend fun loadMessages(narrow: Narrow): List<com.jhellerstedt.zulip.api.models.ZulipMessage> {
+        val store = requireNotNull(activeStore.value) { "No active account" }
+        return coordinator.cachedMessages(store, narrow)
+    }
+
+    suspend fun refreshMessages(narrow: Narrow): Result<List<com.jhellerstedt.zulip.api.models.ZulipMessage>> {
+        val store = requireNotNull(activeStore.value) { "No active account" }
+        return coordinator.refreshMessages(store, narrow)
+    }
+
+    suspend fun loadTopics(streamId: Int): List<com.jhellerstedt.zulip.api.models.ZulipTopic> {
+        val store = requireNotNull(activeStore.value) { "No active account" }
+        return coordinator.cachedTopics(store, streamId)
+    }
+
+    suspend fun refreshTopics(streamId: Int): Result<List<com.jhellerstedt.zulip.api.models.ZulipTopic>> {
+        val store = requireNotNull(activeStore.value) { "No active account" }
+        return coordinator.refreshTopics(store, streamId)
+    }
+
     suspend fun initialize(): Result<ZulipStore> {
         val accounts = withContext(Dispatchers.IO) { accountRepository.getAllAccounts() }
         if (accounts.isEmpty()) return Result.failure(IllegalStateException("No accounts to restore"))

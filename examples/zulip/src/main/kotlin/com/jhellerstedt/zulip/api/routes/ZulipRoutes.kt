@@ -104,7 +104,7 @@ suspend fun getStreamTopics(
 suspend fun getMessages(
     client: ZulipClient,
     narrow: Narrow,
-    numBefore: Int = 100,
+    numBefore: Int = 25,
     anchor: String = "newest",
 ): GetMessagesResponse {
     val body = client.get(
