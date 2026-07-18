@@ -99,8 +99,12 @@ class GlobalStore(
         val repository = outboxRepository
             ?: return Result.failure(IllegalStateException("Zulip outbox repository is not registered"))
         val result = repository.enqueue(accountId, narrow, content, attachments)
-        return result.mapCatching { localId ->
-            check(outboxScheduler?.enqueue(accountId) == true) { "Zulip outbox job is not registered" }
+        return result.map { localId ->
+            try {
+                outboxScheduler?.enqueue(accountId)
+            } catch (_: Exception) {
+                // Best-effort; pending rows are recovered on account activation.
+            }
             localId
         }
     }

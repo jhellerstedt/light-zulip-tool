@@ -484,6 +484,56 @@ class ComposeViewModelTest {
     }
 
     @Test
+    fun sendMessageSucceedsWhenPersistedDespiteSchedulerFailure() = runBlocking {
+        val store = storeWithUsers(
+            accountId = 1L,
+            selfUserId = 9,
+            users = arrayOf(
+                ZulipUser(userId = 9, fullName = "Self User", email = "self@example.com"),
+                ZulipUser(userId = 1, fullName = "Alice Adams", email = "alice@example.com"),
+            ),
+        )
+        val activeStore = MutableStateFlow<ZulipStore?>(store)
+        val observerScope = CoroutineScope(coroutineContext + SupervisorJob())
+
+        try {
+            val viewModel = ComposeViewModel(
+                activeStore = activeStore,
+                narrow = Narrow.Dm(listOf(1)),
+                observationScope = observerScope,
+                enqueueMessage = { _, _, _, attachments ->
+                    assertEquals(1, attachments.size)
+                    // GlobalStore returns success once outbox persist succeeds even if scheduling fails.
+                    Result.success("local-message-id")
+                },
+            )
+            viewModel.replaceAttachments(
+                listOf(
+                    ComposeAttachmentDraft(
+                        displayName = "photo.jpg",
+                        mimeType = "image/jpeg",
+                        filePath = "/tmp/photo.jpg",
+                        sourceIndex = 0,
+                    ),
+                ),
+            )
+
+            viewModel.sendMessage("hello")
+
+            val state = withTimeout(1_000) {
+                viewModel.uiState.first { it.sent }
+            }
+
+            assertTrue(state.sent)
+            assertFalse(state.isSending)
+            assertTrue(state.attachments.isEmpty())
+        } finally {
+            observerScope.cancel()
+            store.client.close()
+        }
+    }
+
+    @Test
     fun sendMessageTransfersAttachmentOwnershipOnSuccess() = runBlocking {
         val store = storeWithUsers(
             accountId = 1L,

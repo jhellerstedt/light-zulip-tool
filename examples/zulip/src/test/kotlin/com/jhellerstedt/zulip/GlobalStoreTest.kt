@@ -130,7 +130,7 @@ class GlobalStoreTest {
     }
 
     @Test
-    fun enqueueMessageFailsWhenSchedulerRejectsWork() = runTest {
+    fun enqueueMessageSucceedsWhenSchedulerRejectsWork() = runTest {
         val accountId = 1L
         val callLog = mutableListOf<String>()
         val accountStore = FakeAccountStore(listOf(fixtureAccount(id = accountId, email = "a@example.com")))
@@ -153,8 +153,35 @@ class GlobalStoreTest {
             attachments = emptyList(),
         )
 
-        assertTrue(result.isFailure)
-        // The message is still durably persisted even though scheduling failed.
+        assertTrue(result.isSuccess)
+        assertEquals(listOf("outbox.enqueue", "scheduler.enqueue"), callLog)
+    }
+
+    @Test
+    fun enqueueMessageSucceedsWhenSchedulerThrows() = runTest {
+        val accountId = 1L
+        val callLog = mutableListOf<String>()
+        val accountStore = FakeAccountStore(listOf(fixtureAccount(id = accountId, email = "a@example.com")))
+        val cache = ZulipCacheRepository(FakeGlobalCacheDao(), nowMillis = { now })
+        val outboxRepository = ZulipOutboxRepository(RecordingOutboxDao(callLog), NoOpOutboxFileStore())
+        val outboxScheduler = ThrowingOutboxScheduler(callLog)
+        val globalStore = GlobalStore(
+            accountRepository = accountStore,
+            cacheRepository = cache,
+            gateway = FakeGlobalGateway(),
+            outboxRepository = outboxRepository,
+            outboxScheduler = outboxScheduler,
+            scope = backgroundScope,
+        )
+
+        val result = globalStore.enqueueMessage(
+            accountId = accountId,
+            narrow = Narrow.Channel(10),
+            content = "hello",
+            attachments = emptyList(),
+        )
+
+        assertTrue(result.isSuccess)
         assertEquals(listOf("outbox.enqueue", "scheduler.enqueue"), callLog)
     }
 
@@ -399,6 +426,19 @@ private class LoggingOutboxScheduler(
     override fun enqueue(accountId: Long): Boolean {
         callLog += "scheduler.enqueue"
         return enqueueResult
+    }
+
+    override fun cancel(accountId: Long) {
+        callLog += "outbox.cancel"
+    }
+}
+
+private class ThrowingOutboxScheduler(
+    private val callLog: MutableList<String>,
+) : OutboxScheduler {
+    override fun enqueue(accountId: Long): Boolean {
+        callLog += "scheduler.enqueue"
+        error("WorkManager unavailable")
     }
 
     override fun cancel(accountId: Long) {
