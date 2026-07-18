@@ -124,6 +124,7 @@ class GlobalStore(
     suspend fun removeAccount(accountId: Long) {
         var nextAccountId: Long? = null
         switchMutex.withLock {
+            outboxScheduler?.cancel(accountId)
             if (_activeAccount.value?.id == accountId) {
                 poller.stop()
                 _activeStore.value = null
@@ -133,10 +134,10 @@ class GlobalStore(
             stores.remove(accountId)
             clients.remove(accountId)?.close()
             withContext(Dispatchers.IO) {
-                accountRepository.deleteAccount(accountId)
                 outboxRepository?.deleteAccount(accountId)
+                cacheRepository.deleteAccount(accountId)
+                accountRepository.deleteAccount(accountId)
             }
-            outboxScheduler?.cancel(accountId)
             val remaining = accountRepository.getAllAccounts()
             if (remaining.isNotEmpty() && _activeAccount.value == null) {
                 nextAccountId = remaining.first().id

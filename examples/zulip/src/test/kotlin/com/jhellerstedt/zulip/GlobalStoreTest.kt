@@ -16,14 +16,23 @@ import com.jhellerstedt.zulip.data.CachedTopicEntity
 import com.jhellerstedt.zulip.data.CachedUserEntity
 import com.jhellerstedt.zulip.data.StoredZulipAccount
 import com.jhellerstedt.zulip.data.ZulipAccountStore
+import com.jhellerstedt.zulip.data.OutboxFileStore
+import com.jhellerstedt.zulip.data.PendingAttachmentEntity
+import com.jhellerstedt.zulip.data.PendingMessageEntity
 import com.jhellerstedt.zulip.data.ZulipCacheDao
 import com.jhellerstedt.zulip.data.ZulipCacheRepository
+import com.jhellerstedt.zulip.data.ZulipOutboxDao
+import com.jhellerstedt.zulip.data.ZulipOutboxRepository
 import com.jhellerstedt.zulip.store.GlobalStore
 import com.jhellerstedt.zulip.store.Narrow
+import com.jhellerstedt.zulip.store.OutboxScheduler
 import com.jhellerstedt.zulip.store.PendingUploadAttachment
 import com.jhellerstedt.zulip.store.cacheKey
+import java.io.File
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
@@ -91,6 +100,35 @@ class GlobalStoreTest {
         storeB.client.close()
     }
 
+    @Test
+    fun removeAccountCancelsOutboxWorkBeforeDeletingData() = runTest {
+        val callLog = mutableListOf<String>()
+        val accountId = 1L
+        val accountStore = RecordingAccountStore(
+            listOf(fixtureAccount(id = accountId, email = "a@example.com")),
+            callLog,
+        )
+        val cacheDao = FakeGlobalCacheDao(callLog)
+        val cache = ZulipCacheRepository(cacheDao, nowMillis = { now })
+        val outboxRepository = ZulipOutboxRepository(RecordingOutboxDao(callLog), NoOpOutboxFileStore())
+        val outboxScheduler = RecordingOutboxScheduler(callLog)
+        val globalStore = GlobalStore(
+            accountRepository = accountStore,
+            cacheRepository = cache,
+            gateway = FakeGlobalGateway(),
+            outboxRepository = outboxRepository,
+            outboxScheduler = outboxScheduler,
+            scope = backgroundScope,
+        )
+
+        globalStore.removeAccount(accountId)
+
+        assertEquals(
+            listOf("outbox.cancel", "outbox.delete", "cache.delete", "account.delete"),
+            callLog,
+        )
+    }
+
     private fun fixtureAccount(id: Long, email: String) = StoredZulipAccount(
         id = id,
         realmUrl = "https://example.com",
@@ -122,7 +160,17 @@ class GlobalStoreTest {
     }
 }
 
-private class FakeAccountStore(accounts: List<StoredZulipAccount>) : ZulipAccountStore {
+private class RecordingAccountStore(
+    accounts: List<StoredZulipAccount>,
+    private val callLog: MutableList<String>,
+) : FakeAccountStore(accounts) {
+    override fun deleteAccount(id: Long): Boolean {
+        callLog += "account.delete"
+        return super.deleteAccount(id)
+    }
+}
+
+private open class FakeAccountStore(accounts: List<StoredZulipAccount>) : ZulipAccountStore {
     private val accountsById = accounts.associateByTo(LinkedHashMap()) { it.id }
     private var activeId: Long? = null
     private var nextId = (accounts.maxOfOrNull { it.id } ?: 0L) + 1
@@ -200,7 +248,51 @@ private class FakeGlobalGateway : ZulipGateway {
         throw UnsupportedOperationException("not used in this test")
 }
 
-private class FakeGlobalCacheDao : ZulipCacheDao {
+private class RecordingOutboxScheduler(
+    private val callLog: MutableList<String>,
+) : OutboxScheduler {
+    override fun enqueue(accountId: Long): Boolean = true
+
+    override fun cancel(accountId: Long) {
+        callLog += "outbox.cancel"
+    }
+}
+
+private class RecordingOutboxDao(
+    private val callLog: MutableList<String>,
+) : ZulipOutboxDao {
+    override suspend fun insertMessage(message: PendingMessageEntity) = Unit
+    override suspend fun insertAttachments(attachments: List<PendingAttachmentEntity>) = Unit
+    override fun pendingCount(accountId: Long): Flow<Int> = emptyFlow()
+    override fun firstFailedMessage(accountId: Long): Flow<PendingMessageEntity?> = emptyFlow()
+    override suspend fun oldestQueuedMessage(accountId: Long): PendingMessageEntity? = null
+    override suspend fun attachments(accountId: Long, messageLocalId: String): List<PendingAttachmentEntity> = emptyList()
+    override suspend fun message(messageLocalId: String): PendingMessageEntity? = null
+    override suspend fun attachment(attachmentLocalId: String): PendingAttachmentEntity? = null
+    override suspend fun markSending(accountId: Long, messageLocalId: String, attemptAt: Long) = Unit
+    override suspend fun markQueued(accountId: Long, messageLocalId: String) = Unit
+    override suspend fun markFailed(accountId: Long, messageLocalId: String, failureReason: String) = Unit
+    override suspend fun checkpointUpload(accountId: Long, attachmentLocalId: String, uploadedUrl: String) = Unit
+    override suspend fun deleteMessage(accountId: Long, messageLocalId: String) = Unit
+    override suspend fun resetSending(accountId: Long) = Unit
+
+    override suspend fun deleteMessagesForAccount(accountId: Long) {
+        callLog += "outbox.delete"
+    }
+}
+
+private class NoOpOutboxFileStore : OutboxFileStore {
+    override fun copyIn(accountId: Long, messageId: String, attachmentId: String, source: File): File =
+        throw UnsupportedOperationException()
+
+    override fun delete(file: File) = Unit
+
+    override fun deleteAccount(accountId: Long) = Unit
+}
+
+private class FakeGlobalCacheDao(
+    private val callLog: MutableList<String>? = null,
+) : ZulipCacheDao {
     val streamRows = mutableListOf<CachedStreamEntity>()
     val userRows = mutableListOf<CachedUserEntity>()
     val topicRows = mutableListOf<CachedTopicEntity>()
@@ -324,5 +416,14 @@ private class FakeGlobalCacheDao : ZulipCacheDao {
 
     override suspend fun deleteMessagesForAccount(accountId: Long) {
         messageRows.removeAll { it.accountId == accountId }
+    }
+
+    override suspend fun deleteAccount(accountId: Long) {
+        callLog?.let { it += "cache.delete" }
+        deleteStreams(accountId)
+        deleteUsers(accountId)
+        deleteTopicsForAccount(accountId)
+        deleteConversations(accountId)
+        deleteMessagesForAccount(accountId)
     }
 }
