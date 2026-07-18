@@ -97,11 +97,21 @@ class ZulipStore(
                 unreadByNarrow[conversation.narrowKey] = conversation.unreadCount
             }
         }
-        _recentDirectMessages.value = snapshot.conversations
-            .mapNotNull { conversation ->
-                val dm = narrowFromCacheKey(conversation.narrowKey) as? Narrow.Dm ?: return@mapNotNull null
-                DirectMessageConversation(dm.userIds.sorted(), conversation.lastMessageId)
-            }
+        // Union DM conversation rows (which mainly cover currently-unread DMs, since
+        // toInboxConversations() only emits unread narrows) with DM narrows that only
+        // have cached messages, so previously opened but now-read DMs still restore.
+        val dmFromConversations = snapshot.conversations.mapNotNull { conversation ->
+            val dm = narrowFromCacheKey(conversation.narrowKey) as? Narrow.Dm ?: return@mapNotNull null
+            DirectMessageConversation(dm.userIds.sorted(), conversation.lastMessageId)
+        }
+        val dmFromMessages = snapshot.messagesByNarrow.mapNotNull { (narrow, cachedMessages) ->
+            val dm = narrow as? Narrow.Dm ?: return@mapNotNull null
+            val maxMessageId = cachedMessages.maxOfOrNull { it.id } ?: return@mapNotNull null
+            DirectMessageConversation(dm.userIds.sorted(), maxMessageId)
+        }
+        _recentDirectMessages.value = (dmFromConversations + dmFromMessages)
+            .groupBy { it.userIds }
+            .map { (userIds, entries) -> DirectMessageConversation(userIds, entries.maxOf { it.maxMessageId }) }
             .sortedByDescending { it.maxMessageId }
         publishSelectableUsers()
         _streamsList.value = streams.values.sortedBy { it.name.lowercase() }
