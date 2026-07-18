@@ -340,18 +340,15 @@ class ZulipStore(
     }
 
     private fun markMessageReadLocally(messageId: Int) {
-        messagesByNarrow.values.forEach { messages ->
+        messagesByNarrow.forEach { (key, messages) ->
             val index = messages.indexOfFirst { it.id == messageId }
             if (index >= 0) {
                 val message = messages[index]
                 if (!message.flags.contains("read")) {
                     messages[index] = message.copy(flags = message.flags + "read")
+                    unreadByNarrow[key] = maxOf(0, (unreadByNarrow[key] ?: 0) - 1)
                 }
             }
-        }
-        unreadByNarrow.keys.toList().forEach { key ->
-            val unread = messagesByNarrow[key]?.count { !it.flags.contains("read") } ?: 0
-            unreadByNarrow[key] = unread
         }
     }
 
