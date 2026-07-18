@@ -162,19 +162,18 @@ class ZulipCacheRepository(
         prune(accountId)
     }
 
-    /** Marks a cached message read in place and recomputes its conversation's unread count. */
+    /** Marks a cached message read in place and decrements its conversation's stored unread count. */
     private suspend fun markCachedMessageRead(accountId: Long, messageId: Int, cachedAt: Long) {
         val row = dao.messageById(accountId, messageId) ?: return
         val message = runCatching { json.decodeFromString<ZulipMessage>(row.payloadJson) }.getOrNull() ?: return
         if (message.flags.contains("read")) return
         dao.upsertMessages(listOf(row.copy(payloadJson = json.encodeToString(message.copy(flags = message.flags + "read")))))
-        val remainingUnread = dao.messages(accountId, row.narrowKey, MESSAGE_LIMIT).count { candidate ->
-            runCatching { json.decodeFromString<ZulipMessage>(candidate.payloadJson) }
-                .getOrNull()
-                ?.flags
-                ?.contains("read") == false
-        }
-        dao.updateConversationUnreadCount(accountId, row.narrowKey, remainingUnread)
+        val conversation = dao.conversations(accountId).firstOrNull { it.narrowKey == row.narrowKey } ?: return
+        dao.updateConversationUnreadCount(
+            accountId,
+            row.narrowKey,
+            maxOf(0, conversation.unreadCount - 1),
+        )
     }
 
     /** Mirrors [com.jhellerstedt.zulip.store.ZulipStore]'s realm_user merge semantics for durability. */

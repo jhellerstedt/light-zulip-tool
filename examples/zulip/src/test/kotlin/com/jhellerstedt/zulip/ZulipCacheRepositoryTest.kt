@@ -100,7 +100,26 @@ class ZulipCacheRepositoryTest {
     }
 
     @Test
-    fun applyEventPersistsReadFlagAndRecomputesConversationUnreadCount() = runBlocking {
+    fun applyEventReadFlagDecrementsStoredUnreadCountWithoutRecountingCachedWindow() = runBlocking {
+        val dao = FakeCacheDao()
+        val repository = ZulipCacheRepository(dao, nowMillis = { now })
+        val accountId = 7L
+        val narrow = Narrow.Topic(4, "release")
+        dao.messageRows += CachedMessageEntity(accountId, 12, narrow.cacheKey(), Json.encodeToString(message(12)), now)
+        dao.conversationRows += CachedConversationEntity(accountId, narrow.cacheKey(), "Mobile > release", 100, 12, 12, now)
+
+        repository.applyEvent(
+            accountId,
+            ZulipEvent(type = "update_message_flags", operation = "add", flag = "read", messages = listOf(12)),
+            conversation = null,
+        )
+
+        assertTrue(Json.decodeFromString<ZulipMessage>(dao.messageRows.single().payloadJson).flags.contains("read"))
+        assertEquals(99, dao.conversationRows.single { it.narrowKey == narrow.cacheKey() }.unreadCount)
+    }
+
+    @Test
+    fun applyEventPersistsReadFlagAndDecrementsConversationUnreadCount() = runBlocking {
         val dao = FakeCacheDao()
         val repository = ZulipCacheRepository(dao, nowMillis = { now })
         val accountId = 7L
