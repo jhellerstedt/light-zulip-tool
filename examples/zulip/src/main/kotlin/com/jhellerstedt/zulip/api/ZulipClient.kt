@@ -14,6 +14,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
@@ -78,7 +79,7 @@ class ZulipClient(
                 }
             }
         }
-        return parseResponse(response.status.value, response.bodyAsText())
+        return parseResponse(response.status.value, responseBody(response))
     }
 
     suspend fun post(
@@ -100,7 +101,7 @@ class ZulipClient(
                 }))
             }
         }
-        return parseResponse(response.status.value, response.bodyAsText())
+        return parseResponse(response.status.value, responseBody(response))
     }
 
     suspend fun postMultipart(
@@ -138,7 +139,7 @@ class ZulipClient(
                 )
             }
         }
-        return parseResponse(response.status.value, response.bodyAsText())
+        return parseResponse(response.status.value, responseBody(response))
     }
 
     private suspend fun <T> networkRequest(block: suspend () -> T): T =
@@ -152,7 +153,19 @@ class ZulipClient(
             throw ZulipApiException.Network(error.message ?: "Network request failed", error)
         }
 
-    private fun parseResponse(statusCode: Int, body: String): String {
+    private suspend fun responseBody(response: HttpResponse): String =
+        networkRequest { response.bodyAsText() }
+
+    internal fun parseResponse(statusCode: Int, body: String): String {
+        if (statusCode == 408 || statusCode == 429 || statusCode >= 500) {
+            val error = zulipError(body)
+            throw ZulipApiException.ApiError(
+                statusCode = statusCode,
+                code = error?.code,
+                message = error?.message ?: "HTTP $statusCode",
+            )
+        }
+
         val root = runCatching { json.parseToJsonElement(body).jsonObject }
             .getOrElse { throw ZulipApiException.MalformedResponse(body.take(500)) }
 
@@ -164,6 +177,18 @@ class ZulipClient(
         }
         return body
     }
+
+    private fun zulipError(body: String): ZulipError? = runCatching {
+        val root = json.parseToJsonElement(body).jsonObject
+        if (root["result"]?.jsonPrimitive?.content != "error") {
+            null
+        } else {
+            ZulipError(
+                code = root["code"]?.jsonPrimitive?.content,
+                message = root["msg"]?.jsonPrimitive?.content ?: "Malformed Zulip error",
+            )
+        }
+    }.getOrNull()
 
     fun close() {
         client.close()
@@ -186,4 +211,9 @@ class ZulipClient(
         private fun encode(value: String): String =
             java.net.URLEncoder.encode(value, Charsets.UTF_8.name())
     }
+
+    private data class ZulipError(
+        val code: String?,
+        val message: String,
+    )
 }
