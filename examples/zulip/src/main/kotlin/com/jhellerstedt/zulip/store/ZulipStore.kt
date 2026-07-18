@@ -97,6 +97,12 @@ class ZulipStore(
                 unreadByNarrow[conversation.narrowKey] = conversation.unreadCount
             }
         }
+        _recentDirectMessages.value = snapshot.conversations
+            .mapNotNull { conversation ->
+                val dm = narrowFromCacheKey(conversation.narrowKey) as? Narrow.Dm ?: return@mapNotNull null
+                DirectMessageConversation(dm.userIds.sorted(), conversation.lastMessageId)
+            }
+            .sortedByDescending { it.maxMessageId }
         publishSelectableUsers()
         _streamsList.value = streams.values.sortedBy { it.name.lowercase() }
         rebuildInbox()
