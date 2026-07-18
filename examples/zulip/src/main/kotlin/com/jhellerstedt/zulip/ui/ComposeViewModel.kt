@@ -36,20 +36,20 @@ class ComposeViewModel internal constructor(
     private val activeStore: StateFlow<ZulipStore?>,
     private val narrow: Narrow,
     private val observationScope: CoroutineScope? = null,
-    private val sendMessageWithStore: suspend (
-        ZulipStore,
+    private val enqueueMessage: suspend (
+        Long,
         Narrow,
         String,
         List<PendingUploadAttachment>,
-    ) -> Result<Int> = { store, currentNarrow, content, attachments ->
-        store.send(
-            narrow = currentNarrow,
-            content = content,
-            attachments = attachments,
-        )
+    ) -> Result<String> = { _, _, _, _ ->
+        error("enqueueMessage is not configured")
     },
 ) : LightViewModel<Unit>() {
-    constructor(globalStore: GlobalStore, narrow: Narrow) : this(globalStore.activeStore, narrow)
+    constructor(globalStore: GlobalStore, narrow: Narrow) : this(
+        activeStore = globalStore.activeStore,
+        narrow = narrow,
+        enqueueMessage = globalStore::enqueueMessage,
+    )
 
     private val _uiState = MutableStateFlow(ComposeUiState())
     val uiState: StateFlow<ComposeUiState> = _uiState.asStateFlow()
@@ -104,6 +104,7 @@ class ComposeViewModel internal constructor(
             _uiState.update { it.copy(errorMessage = "Active account changed. Reopen compose to send.") }
             return
         }
+        val accountId = store.account.id
         _uiState.update { it.copy(isSending = true, errorMessage = null) }
         (observationScope ?: viewModelScope).launch {
             withContext(Dispatchers.IO) {
@@ -114,14 +115,17 @@ class ComposeViewModel internal constructor(
                         file = File(attachment.filePath),
                     )
                 }
-                sendMessageWithStore(
-                    store,
+                enqueueMessage(
+                    accountId,
                     narrow,
                     trimmed,
                     pendingAttachments,
                 )
             }.onSuccess {
-                _uiState.update { it.copy(isSending = false, sent = true) }
+                // The repository durably copied and now owns these attachment files, so the
+                // ViewModel must drop its references before goBack() runs, otherwise
+                // ComposeScreen.onScreenDestroy() would delete the outbox's copies.
+                _uiState.update { it.copy(isSending = false, sent = true, attachments = emptyList()) }
             }.onFailure { error ->
                 _uiState.update {
                     it.copy(

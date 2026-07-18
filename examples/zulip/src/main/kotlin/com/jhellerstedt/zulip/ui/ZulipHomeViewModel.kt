@@ -3,11 +3,16 @@ package com.jhellerstedt.zulip.ui
 import androidx.lifecycle.viewModelScope
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SimpleLightScreen
+import com.jhellerstedt.zulip.data.PendingMessageEntity
+import com.jhellerstedt.zulip.store.ConnectionState
 import com.jhellerstedt.zulip.store.GlobalStore
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -16,6 +21,9 @@ data class ZulipHomeUiState(
     val streamCount: Int = 0,
     val directMessageCount: Int = 0,
     val isLoading: Boolean = false,
+    val connectionState: ConnectionState = ConnectionState.REFRESHING,
+    val pendingMessageCount: Int = 0,
+    val failedMessage: PendingMessageEntity? = null,
     val errorMessage: String? = null,
 )
 
@@ -25,6 +33,10 @@ class ZulipHomeViewModel(
     private val _uiState = MutableStateFlow(ZulipHomeUiState())
     val uiState: StateFlow<ZulipHomeUiState> = _uiState.asStateFlow()
     private var storeObserverJob: Job? = null
+
+    // A dismissed failure is hidden from the overlay until either it is resolved
+    // (retried/discarded) or a different failure takes its place.
+    private val _dismissedFailureId = MutableStateFlow<String?>(null)
 
     init {
         viewModelScope.launch {
@@ -60,12 +72,31 @@ class ZulipHomeViewModel(
                         }
                     }
                     launch {
+                        store.connectionState.collect { connectionState ->
+                            _uiState.update { it.copy(connectionState = connectionState) }
+                        }
+                    }
+                    launch {
                         store.error.collect { error ->
                             if (error != null) {
                                 _uiState.update { it.copy(errorMessage = error) }
                             }
                         }
                     }
+                }
+            }
+        }
+        viewModelScope.launch {
+            globalStore.activeAccount.flatMapLatest { account ->
+                account?.let { globalStore.outboxSummary(it.id) } ?: flowOf(null)
+            }.combine(_dismissedFailureId) { summary, dismissedId ->
+                summary to dismissedId
+            }.collect { (summary, dismissedId) ->
+                _uiState.update {
+                    it.copy(
+                        pendingMessageCount = summary?.pendingCount ?: 0,
+                        failedMessage = summary?.firstFailure?.takeIf { failure -> failure.localId != dismissedId },
+                    )
                 }
             }
         }
@@ -89,5 +120,25 @@ class ZulipHomeViewModel(
     fun dismissError() {
         globalStore.activeStore.value?.clearError()
         _uiState.update { it.copy(errorMessage = null) }
+    }
+
+    fun retryFailedMessage() {
+        val message = _uiState.value.failedMessage ?: return
+        val accountId = globalStore.activeAccount.value?.id ?: return
+        viewModelScope.launch {
+            globalStore.retryOutboxMessage(message.localId, accountId)
+        }
+    }
+
+    fun discardFailedMessage() {
+        val message = _uiState.value.failedMessage ?: return
+        viewModelScope.launch {
+            globalStore.discardOutboxMessage(message.localId)
+        }
+    }
+
+    fun closeFailedMessage() {
+        val message = _uiState.value.failedMessage ?: return
+        _dismissedFailureId.value = message.localId
     }
 }

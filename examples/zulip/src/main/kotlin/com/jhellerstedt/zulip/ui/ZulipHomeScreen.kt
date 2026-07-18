@@ -10,7 +10,9 @@ import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.rememberKeyboardOptions
@@ -28,6 +30,7 @@ import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 import com.jhellerstedt.zulip.ZulipServices
+import com.jhellerstedt.zulip.data.PendingMessageEntity
 
 class ZulipHomeScreen(sealedActivity: SealedLightActivity) :
     LightScreen<Unit, ZulipHomeViewModel>(sealedActivity) {
@@ -59,6 +62,15 @@ class ZulipHomeScreen(sealedActivity: SealedLightActivity) :
                         LightText(
                             text = "Syncing…",
                             variant = LightTextVariant.Copy,
+                            modifier = Modifier.padding(horizontal = 1f.gridUnitsAsDp()),
+                        )
+                    }
+
+                    if (state.pendingMessageCount > 0) {
+                        LightText(
+                            text = "${state.pendingMessageCount} message(s) pending",
+                            variant = LightTextVariant.Detail,
+                            lighten = true,
                             modifier = Modifier.padding(horizontal = 1f.gridUnitsAsDp()),
                         )
                     }
@@ -100,8 +112,60 @@ class ZulipHomeScreen(sealedActivity: SealedLightActivity) :
                         onClose = viewModel::dismissError,
                     )
                 }
+
+                state.failedMessage?.let { failedMessage ->
+                    OutboxFailureOverlay(
+                        failedMessage = failedMessage,
+                        onRetry = viewModel::retryFailedMessage,
+                        onDiscard = viewModel::discardFailedMessage,
+                        onClose = viewModel::closeFailedMessage,
+                    )
+                }
             }
         }
+    }
+}
+
+/**
+ * [com.thelightphone.sdk.ui.LightFullscreenModal] only supports a single dismiss action, but a
+ * permanently failed outbox message needs retry/discard/close, so this app builds its own
+ * full-screen overlay with a three-item bottom bar instead.
+ */
+@Composable
+private fun OutboxFailureOverlay(
+    failedMessage: PendingMessageEntity,
+    onRetry: () -> Unit,
+    onDiscard: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val colors = LightThemeTokens.colors
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(colors.background),
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(horizontal = 1f.gridUnitsAsDp()),
+            contentAlignment = Alignment.Center,
+        ) {
+            LightText(
+                text = failedMessage.failureReason ?: "This message could not be sent",
+                variant = LightTextVariant.Copy,
+                align = TextAlign.Center,
+            )
+        }
+
+        LightBottomBar(
+            items = listOf(
+                LightBarButton.Text(text = "RETRY", onClick = onRetry),
+                LightBarButton.Text(text = "DISCARD", onClick = onDiscard),
+                LightBarButton.Text(text = "CLOSE", onClick = onClose),
+            ),
+        )
     }
 }
 

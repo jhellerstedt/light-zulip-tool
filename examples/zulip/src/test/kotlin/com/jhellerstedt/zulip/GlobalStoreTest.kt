@@ -33,6 +33,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
@@ -98,6 +99,139 @@ class GlobalStoreTest {
 
         storeA.client.close()
         storeB.client.close()
+    }
+
+    @Test
+    fun enqueueMessagePersistsThenSchedulesOutboxWorker() = runTest {
+        val accountId = 1L
+        val callLog = mutableListOf<String>()
+        val accountStore = FakeAccountStore(listOf(fixtureAccount(id = accountId, email = "a@example.com")))
+        val cache = ZulipCacheRepository(FakeGlobalCacheDao(), nowMillis = { now })
+        val outboxRepository = ZulipOutboxRepository(RecordingOutboxDao(callLog), NoOpOutboxFileStore())
+        val outboxScheduler = LoggingOutboxScheduler(callLog, enqueueResult = true)
+        val globalStore = GlobalStore(
+            accountRepository = accountStore,
+            cacheRepository = cache,
+            gateway = FakeGlobalGateway(),
+            outboxRepository = outboxRepository,
+            outboxScheduler = outboxScheduler,
+            scope = backgroundScope,
+        )
+
+        val result = globalStore.enqueueMessage(
+            accountId = accountId,
+            narrow = Narrow.Channel(10),
+            content = "hello",
+            attachments = emptyList(),
+        )
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf("outbox.enqueue", "scheduler.enqueue"), callLog)
+    }
+
+    @Test
+    fun enqueueMessageFailsWhenSchedulerRejectsWork() = runTest {
+        val accountId = 1L
+        val callLog = mutableListOf<String>()
+        val accountStore = FakeAccountStore(listOf(fixtureAccount(id = accountId, email = "a@example.com")))
+        val cache = ZulipCacheRepository(FakeGlobalCacheDao(), nowMillis = { now })
+        val outboxRepository = ZulipOutboxRepository(RecordingOutboxDao(callLog), NoOpOutboxFileStore())
+        val outboxScheduler = LoggingOutboxScheduler(callLog, enqueueResult = false)
+        val globalStore = GlobalStore(
+            accountRepository = accountStore,
+            cacheRepository = cache,
+            gateway = FakeGlobalGateway(),
+            outboxRepository = outboxRepository,
+            outboxScheduler = outboxScheduler,
+            scope = backgroundScope,
+        )
+
+        val result = globalStore.enqueueMessage(
+            accountId = accountId,
+            narrow = Narrow.Channel(10),
+            content = "hello",
+            attachments = emptyList(),
+        )
+
+        assertTrue(result.isFailure)
+        // The message is still durably persisted even though scheduling failed.
+        assertEquals(listOf("outbox.enqueue", "scheduler.enqueue"), callLog)
+    }
+
+    @Test
+    fun enqueueMessagePropagatesLocalPersistenceFailureWithoutScheduling() = runTest {
+        val accountId = 1L
+        val callLog = mutableListOf<String>()
+        val accountStore = FakeAccountStore(listOf(fixtureAccount(id = accountId, email = "a@example.com")))
+        val cache = ZulipCacheRepository(FakeGlobalCacheDao(), nowMillis = { now })
+        val outboxRepository = ZulipOutboxRepository(FailingInsertOutboxDao(callLog), NoOpOutboxFileStore())
+        val outboxScheduler = LoggingOutboxScheduler(callLog, enqueueResult = true)
+        val globalStore = GlobalStore(
+            accountRepository = accountStore,
+            cacheRepository = cache,
+            gateway = FakeGlobalGateway(),
+            outboxRepository = outboxRepository,
+            outboxScheduler = outboxScheduler,
+            scope = backgroundScope,
+        )
+
+        val result = globalStore.enqueueMessage(
+            accountId = accountId,
+            narrow = Narrow.Channel(10),
+            content = "hello",
+            attachments = emptyList(),
+        )
+
+        assertTrue(result.isFailure)
+        assertEquals(listOf("outbox.enqueue"), callLog)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun switchAccountSchedulesOutboxWorkerWhenPendingRowsExist() = runTest {
+        val accountId = 1L
+        val callLog = mutableListOf<String>()
+        val accountStore = FakeAccountStore(listOf(fixtureAccount(id = accountId, email = "a@example.com")))
+        val cache = ZulipCacheRepository(FakeGlobalCacheDao(), nowMillis = { now })
+        val outboxRepository = ZulipOutboxRepository(RecordingOutboxDao(callLog, pendingCount = 1), NoOpOutboxFileStore())
+        val outboxScheduler = LoggingOutboxScheduler(callLog, enqueueResult = true)
+        val globalStore = GlobalStore(
+            accountRepository = accountStore,
+            cacheRepository = cache,
+            gateway = FakeGlobalGateway(),
+            outboxRepository = outboxRepository,
+            outboxScheduler = outboxScheduler,
+            scope = backgroundScope,
+        )
+
+        globalStore.switchAccount(accountId).getOrThrow()
+        runCurrent()
+
+        assertTrue(callLog.contains("scheduler.enqueue"))
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun switchAccountDoesNotScheduleOutboxWorkerWhenNoPendingRows() = runTest {
+        val accountId = 1L
+        val callLog = mutableListOf<String>()
+        val accountStore = FakeAccountStore(listOf(fixtureAccount(id = accountId, email = "a@example.com")))
+        val cache = ZulipCacheRepository(FakeGlobalCacheDao(), nowMillis = { now })
+        val outboxRepository = ZulipOutboxRepository(RecordingOutboxDao(callLog, pendingCount = 0), NoOpOutboxFileStore())
+        val outboxScheduler = LoggingOutboxScheduler(callLog, enqueueResult = true)
+        val globalStore = GlobalStore(
+            accountRepository = accountStore,
+            cacheRepository = cache,
+            gateway = FakeGlobalGateway(),
+            outboxRepository = outboxRepository,
+            outboxScheduler = outboxScheduler,
+            scope = backgroundScope,
+        )
+
+        globalStore.switchAccount(accountId).getOrThrow()
+        runCurrent()
+
+        assertTrue(callLog.none { it == "scheduler.enqueue" })
     }
 
     @Test
@@ -258,13 +392,36 @@ private class RecordingOutboxScheduler(
     }
 }
 
+private class LoggingOutboxScheduler(
+    private val callLog: MutableList<String>,
+    private val enqueueResult: Boolean,
+) : OutboxScheduler {
+    override fun enqueue(accountId: Long): Boolean {
+        callLog += "scheduler.enqueue"
+        return enqueueResult
+    }
+
+    override fun cancel(accountId: Long) {
+        callLog += "outbox.cancel"
+    }
+}
+
 private class RecordingOutboxDao(
     private val callLog: MutableList<String>,
+    private val pendingCount: Int = 0,
 ) : ZulipOutboxDao {
     override suspend fun insertMessage(message: PendingMessageEntity) = Unit
     override suspend fun insertAttachments(attachments: List<PendingAttachmentEntity>) = Unit
-    override fun pendingCount(accountId: Long): Flow<Int> = emptyFlow()
-    override fun firstFailedMessage(accountId: Long): Flow<PendingMessageEntity?> = emptyFlow()
+
+    override suspend fun insertMessageWithAttachments(
+        message: PendingMessageEntity,
+        attachments: List<PendingAttachmentEntity>,
+    ) {
+        callLog += "outbox.enqueue"
+    }
+
+    override fun pendingCount(accountId: Long): Flow<Int> = flowOf(pendingCount)
+    override fun firstFailedMessage(accountId: Long): Flow<PendingMessageEntity?> = flowOf(null)
     override suspend fun oldestQueuedMessage(accountId: Long): PendingMessageEntity? = null
     override suspend fun attachments(accountId: Long, messageLocalId: String): List<PendingAttachmentEntity> = emptyList()
     override suspend fun message(messageLocalId: String): PendingMessageEntity? = null
@@ -279,6 +436,35 @@ private class RecordingOutboxDao(
     override suspend fun deleteMessagesForAccount(accountId: Long) {
         callLog += "outbox.delete"
     }
+}
+
+private class FailingInsertOutboxDao(
+    private val callLog: MutableList<String>,
+) : ZulipOutboxDao {
+    override suspend fun insertMessage(message: PendingMessageEntity) = Unit
+    override suspend fun insertAttachments(attachments: List<PendingAttachmentEntity>) = Unit
+
+    override suspend fun insertMessageWithAttachments(
+        message: PendingMessageEntity,
+        attachments: List<PendingAttachmentEntity>,
+    ) {
+        callLog += "outbox.enqueue"
+        error("Simulated local persistence failure")
+    }
+
+    override fun pendingCount(accountId: Long): Flow<Int> = flowOf(0)
+    override fun firstFailedMessage(accountId: Long): Flow<PendingMessageEntity?> = flowOf(null)
+    override suspend fun oldestQueuedMessage(accountId: Long): PendingMessageEntity? = null
+    override suspend fun attachments(accountId: Long, messageLocalId: String): List<PendingAttachmentEntity> = emptyList()
+    override suspend fun message(messageLocalId: String): PendingMessageEntity? = null
+    override suspend fun attachment(attachmentLocalId: String): PendingAttachmentEntity? = null
+    override suspend fun markSending(accountId: Long, messageLocalId: String, attemptAt: Long) = Unit
+    override suspend fun markQueued(accountId: Long, messageLocalId: String) = Unit
+    override suspend fun markFailed(accountId: Long, messageLocalId: String, failureReason: String) = Unit
+    override suspend fun checkpointUpload(accountId: Long, attachmentLocalId: String, uploadedUrl: String) = Unit
+    override suspend fun deleteMessage(accountId: Long, messageLocalId: String) = Unit
+    override suspend fun resetSending(accountId: Long) = Unit
+    override suspend fun deleteMessagesForAccount(accountId: Long) = Unit
 }
 
 private class NoOpOutboxFileStore : OutboxFileStore {

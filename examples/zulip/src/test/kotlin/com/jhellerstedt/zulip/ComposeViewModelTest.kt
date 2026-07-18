@@ -6,6 +6,7 @@ import com.jhellerstedt.zulip.api.models.ZulipUser
 import com.jhellerstedt.zulip.data.StoredZulipAccount
 import com.jhellerstedt.zulip.store.Narrow
 import com.jhellerstedt.zulip.store.ZulipStore
+import com.jhellerstedt.zulip.ui.ComposeAttachmentDraft
 import com.jhellerstedt.zulip.ui.ComposeViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -19,6 +20,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ComposeViewModelTest {
@@ -368,20 +370,20 @@ class ComposeViewModelTest {
         )
         val activeStore = MutableStateFlow<ZulipStore?>(firstStore)
         val observerScope = CoroutineScope(coroutineContext + SupervisorJob())
-        var sendCalls = 0
+        var enqueueCalls = 0
 
         try {
             val viewModel = ComposeViewModel(
                 activeStore = activeStore,
                 narrow = Narrow.Dm(listOf(2)),
                 observationScope = observerScope,
-                sendMessageWithStore = { store, narrow, content, attachments ->
-                    sendCalls++
+                enqueueMessage = { accountId, narrow, content, attachments ->
+                    enqueueCalls++
+                    assertEquals(2L, accountId)
                     assertEquals(Narrow.Dm(listOf(2)), narrow)
                     assertEquals("hello", content)
                     assertEquals(emptyList(), attachments)
-                    assertEquals(secondStore, store)
-                    Result.success(123)
+                    Result.success("local-message-id")
                 },
             )
 
@@ -393,11 +395,138 @@ class ComposeViewModelTest {
             }
 
             assertEquals("Active account changed. Reopen compose to send.", state.errorMessage)
-            assertEquals(0, sendCalls)
+            assertEquals(0, enqueueCalls)
         } finally {
             observerScope.cancel()
             firstStore.client.close()
             secondStore.client.close()
+        }
+    }
+
+    @Test
+    fun sendReportsSuccessAfterDurableEnqueue() = runBlocking {
+        val store = storeWithUsers(
+            accountId = 1L,
+            selfUserId = 9,
+            users = arrayOf(
+                ZulipUser(userId = 9, fullName = "Self User", email = "self@example.com"),
+                ZulipUser(userId = 1, fullName = "Alice Adams", email = "alice@example.com"),
+            ),
+        )
+        val activeStore = MutableStateFlow<ZulipStore?>(store)
+        val observerScope = CoroutineScope(coroutineContext + SupervisorJob())
+        var enqueued = false
+
+        try {
+            val viewModel = ComposeViewModel(
+                activeStore = activeStore,
+                narrow = Narrow.Dm(listOf(1)),
+                observationScope = observerScope,
+                enqueueMessage = { accountId, _, content, _ ->
+                    enqueued = true
+                    assertEquals(1L, accountId)
+                    assertEquals("hello", content)
+                    Result.success("local-message-id")
+                },
+            )
+
+            viewModel.sendMessage("hello")
+
+            val state = withTimeout(1_000) {
+                viewModel.uiState.first { it.sent }
+            }
+
+            assertTrue(enqueued)
+            assertTrue(state.sent)
+            assertFalse(state.isSending)
+        } finally {
+            observerScope.cancel()
+            store.client.close()
+        }
+    }
+
+    @Test
+    fun sendMessageLeavesComposeOpenWhenLocalPersistenceFails() = runBlocking {
+        val store = storeWithUsers(
+            accountId = 1L,
+            selfUserId = 9,
+            users = arrayOf(
+                ZulipUser(userId = 9, fullName = "Self User", email = "self@example.com"),
+                ZulipUser(userId = 1, fullName = "Alice Adams", email = "alice@example.com"),
+            ),
+        )
+        val activeStore = MutableStateFlow<ZulipStore?>(store)
+        val observerScope = CoroutineScope(coroutineContext + SupervisorJob())
+
+        try {
+            val viewModel = ComposeViewModel(
+                activeStore = activeStore,
+                narrow = Narrow.Dm(listOf(1)),
+                observationScope = observerScope,
+                enqueueMessage = { _, _, _, _ ->
+                    Result.failure(IllegalStateException("Could not save message locally"))
+                },
+            )
+
+            viewModel.sendMessage("hello")
+
+            val state = withTimeout(1_000) {
+                viewModel.uiState.first { it.errorMessage != null }
+            }
+
+            assertEquals("Could not save message locally", state.errorMessage)
+            assertFalse(state.sent)
+            assertFalse(state.isSending)
+        } finally {
+            observerScope.cancel()
+            store.client.close()
+        }
+    }
+
+    @Test
+    fun sendMessageTransfersAttachmentOwnershipOnSuccess() = runBlocking {
+        val store = storeWithUsers(
+            accountId = 1L,
+            selfUserId = 9,
+            users = arrayOf(
+                ZulipUser(userId = 9, fullName = "Self User", email = "self@example.com"),
+                ZulipUser(userId = 1, fullName = "Alice Adams", email = "alice@example.com"),
+            ),
+        )
+        val activeStore = MutableStateFlow<ZulipStore?>(store)
+        val observerScope = CoroutineScope(coroutineContext + SupervisorJob())
+
+        try {
+            val viewModel = ComposeViewModel(
+                activeStore = activeStore,
+                narrow = Narrow.Dm(listOf(1)),
+                observationScope = observerScope,
+                enqueueMessage = { _, _, _, attachments ->
+                    assertEquals(1, attachments.size)
+                    Result.success("local-message-id")
+                },
+            )
+            viewModel.replaceAttachments(
+                listOf(
+                    ComposeAttachmentDraft(
+                        displayName = "photo.jpg",
+                        mimeType = "image/jpeg",
+                        filePath = "/tmp/photo.jpg",
+                        sourceIndex = 0,
+                    ),
+                ),
+            )
+
+            viewModel.sendMessage("hello")
+
+            val state = withTimeout(1_000) {
+                viewModel.uiState.first { it.sent }
+            }
+
+            assertTrue(state.attachments.isEmpty())
+        } finally {
+            observerScope.cancel()
+            store.client.close()
         }
     }
 

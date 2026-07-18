@@ -165,7 +165,7 @@ class ComposeScreen(
                     if (state.attachments.isNotEmpty()) {
                         LightText(
                             text = if (state.isSending) {
-                                "Uploading ${state.attachments.size} photos..."
+                                "Queueing ${state.attachments.size} photos..."
                             } else {
                                 buildAttachmentSummary(state.attachments.map { it.displayName })
                             },
@@ -227,7 +227,7 @@ class ComposeScreen(
                                 },
                             ),
                             LightBarButton.Text(
-                                text = if (state.isSending) "SENDING" else "SEND",
+                                text = if (state.isSending) "QUEUEING" else "SEND",
                                 onClick = if (state.isSending) {
                                     null
                                 } else {

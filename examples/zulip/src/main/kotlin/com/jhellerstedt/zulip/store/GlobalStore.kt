@@ -4,6 +4,7 @@ import com.jhellerstedt.zulip.api.DefaultZulipGateway
 import com.jhellerstedt.zulip.api.ZulipApiException
 import com.jhellerstedt.zulip.api.ZulipClient
 import com.jhellerstedt.zulip.api.ZulipGateway
+import com.jhellerstedt.zulip.data.OutboxSummary
 import com.jhellerstedt.zulip.data.StoredZulipAccount
 import com.jhellerstedt.zulip.data.ZulipAccountStore
 import com.jhellerstedt.zulip.data.ZulipCacheRepository
@@ -12,9 +13,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -86,6 +90,33 @@ class GlobalStore(
         return coordinator.refreshTopics(store, streamId)
     }
 
+    suspend fun enqueueMessage(
+        accountId: Long,
+        narrow: Narrow,
+        content: String,
+        attachments: List<PendingUploadAttachment>,
+    ): Result<String> {
+        val repository = outboxRepository
+            ?: return Result.failure(IllegalStateException("Zulip outbox repository is not registered"))
+        val result = repository.enqueue(accountId, narrow, content, attachments)
+        return result.mapCatching { localId ->
+            check(outboxScheduler?.enqueue(accountId) == true) { "Zulip outbox job is not registered" }
+            localId
+        }
+    }
+
+    fun outboxSummary(accountId: Long): Flow<OutboxSummary> =
+        outboxRepository?.observeSummary(accountId) ?: flowOf(OutboxSummary(pendingCount = 0, firstFailure = null))
+
+    suspend fun retryOutboxMessage(messageId: String, accountId: Long) {
+        outboxRepository?.retry(messageId)
+        outboxScheduler?.enqueue(accountId)
+    }
+
+    suspend fun discardOutboxMessage(messageId: String) {
+        outboxRepository?.discard(messageId)
+    }
+
     suspend fun initialize(): Result<ZulipStore> {
         val accounts = withContext(Dispatchers.IO) { accountRepository.getAllAccounts() }
         if (accounts.isEmpty()) return Result.failure(IllegalStateException("No accounts to restore"))
@@ -155,6 +186,19 @@ class GlobalStore(
         stores.clear()
     }
 
+    /**
+     * Recovers the narrow case where local persistence succeeded but process death occurred
+     * before WorkManager enqueueing: if an account has pending outbox rows when it becomes
+     * active, make sure its worker is (re)scheduled.
+     */
+    private suspend fun scheduleOutboxWorkerIfPending(accountId: Long) {
+        val repository = outboxRepository ?: return
+        val scheduler = outboxScheduler ?: return
+        if (repository.observeSummary(accountId).first().pendingCount > 0) {
+            scheduler.enqueue(accountId)
+        }
+    }
+
     private suspend fun switchAccountLocked(accountId: Long): ZulipStore {
         poller.stop()
         val account = requireNotNull(accountRepository.getAccount(accountId)) {
@@ -172,6 +216,7 @@ class GlobalStore(
             ZulipStore(account, client)
         }
         store.updateAccountMetadata(account)
+        scheduleOutboxWorkerIfPending(accountId)
 
         val hydration = coordinator.hydrate(store)
         _activeStore.value = store
