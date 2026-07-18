@@ -10,6 +10,19 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface ZulipOutboxDao {
     @Transaction
+    suspend fun claimNext(accountId: Long, attemptAt: Long): PendingOutboxItem? {
+        val message = oldestQueuedMessage(accountId) ?: return null
+        markSending(accountId, message.localId, attemptAt)
+        return PendingOutboxItem(
+            message = message.copy(
+                state = OutboxMessageState.SENDING,
+                attemptAt = attemptAt,
+            ),
+            attachments = attachments(accountId, message.localId),
+        )
+    }
+
+    @Transaction
     suspend fun insertMessageWithAttachments(
         message: PendingMessageEntity,
         attachments: List<PendingAttachmentEntity>,
@@ -48,6 +61,12 @@ interface ZulipOutboxDao {
     )
     suspend fun attachments(accountId: Long, messageLocalId: String): List<PendingAttachmentEntity>
 
+    @Query("SELECT * FROM pending_messages WHERE local_id = :messageLocalId LIMIT 1")
+    suspend fun message(messageLocalId: String): PendingMessageEntity?
+
+    @Query("SELECT * FROM pending_attachments WHERE local_id = :attachmentLocalId LIMIT 1")
+    suspend fun attachment(attachmentLocalId: String): PendingAttachmentEntity?
+
     @Query(
         "UPDATE pending_messages SET state = 'SENDING', attempt_at = :attemptAt " +
             "WHERE account_id = :accountId AND local_id = :messageLocalId",
@@ -74,4 +93,13 @@ interface ZulipOutboxDao {
 
     @Query("DELETE FROM pending_messages WHERE account_id = :accountId AND local_id = :messageLocalId")
     suspend fun deleteMessage(accountId: Long, messageLocalId: String)
+
+    @Query(
+        "UPDATE pending_messages SET state = 'QUEUED' " +
+            "WHERE account_id = :accountId AND state = 'SENDING'",
+    )
+    suspend fun resetSending(accountId: Long)
+
+    @Query("DELETE FROM pending_messages WHERE account_id = :accountId")
+    suspend fun deleteMessagesForAccount(accountId: Long)
 }
