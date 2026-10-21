@@ -44,7 +44,7 @@ class HomeScreenViewModel(
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         super.onScreenShow(screen)
-        ringtones.value = fileShare.list("ringtones")
+        ringtones.value = fileShare.list("ringtones").map { it.name }
     }
 
     fun selectRingtone(filename: String) {
@@ -101,7 +101,7 @@ class HomeScreen(sealedActivity: SealedLightActivity) : LightScreen<Unit, HomeSc
                     )
                     LightIcon(icon = LightIcons.CALL, modifier = Modifier.padding(end = 16.dp))
                     LightIcon(icon = LightIcons.SEARCH, modifier = Modifier.padding(end = 16.dp))
-                    LightIcon(icon = LightIcons.TOGGLE_ON)
+                    LightIcon(icon = LightIcons.TOGGLE_STATE_ON)
                 }
 
                 status?.let {
