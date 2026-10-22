@@ -1,7 +1,6 @@
 package com.jhellerstedt.zulip.ui
 
 import androidx.lifecycle.viewModelScope
-import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SimpleLightScreen
 import com.jhellerstedt.zulip.data.PendingMessageEntity
 import com.jhellerstedt.zulip.store.ConnectionState
@@ -29,7 +28,7 @@ data class ZulipHomeUiState(
 
 class ZulipHomeViewModel(
     private val globalStore: GlobalStore,
-) : LightViewModel<Unit>() {
+) : ZulipViewModel<Unit>(globalStore) {
     private val _uiState = MutableStateFlow(ZulipHomeUiState())
     val uiState: StateFlow<ZulipHomeUiState> = _uiState.asStateFlow()
     private var storeObserverJob: Job? = null
@@ -103,6 +102,7 @@ class ZulipHomeViewModel(
     }
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
+        super.onScreenShow(screen)
         refreshFromStore()
     }
 

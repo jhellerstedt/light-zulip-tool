@@ -1,7 +1,6 @@
 package com.jhellerstedt.zulip.ui
 
 import androidx.lifecycle.viewModelScope
-import com.thelightphone.sdk.LightViewModel
 import com.jhellerstedt.zulip.data.StoredZulipAccount
 import com.jhellerstedt.zulip.store.GlobalStore
 import kotlinx.coroutines.Dispatchers
@@ -19,7 +18,7 @@ data class SettingsUiState(
 
 class SettingsViewModel(
     private val globalStore: GlobalStore,
-) : LightViewModel<Unit>() {
+) : ZulipViewModel<Unit>(globalStore) {
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 

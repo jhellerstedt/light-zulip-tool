@@ -1,7 +1,6 @@
 package com.jhellerstedt.zulip.ui
 
 import androidx.lifecycle.viewModelScope
-import com.thelightphone.sdk.LightViewModel
 import com.jhellerstedt.zulip.api.models.ZulipTopic
 import com.jhellerstedt.zulip.store.ConnectionState
 import com.jhellerstedt.zulip.store.GlobalStore
@@ -25,13 +24,17 @@ class TopicListViewModel internal constructor(
     private val cachedTopics: suspend () -> List<ZulipTopic>,
     private val refreshTopics: suspend () -> Result<List<ZulipTopic>>,
     private val connectionState: () -> ConnectionState? = { null },
-) : LightViewModel<Unit>() {
+    pauseEventSync: () -> Unit = {},
+    resumeEventSync: () -> Unit = {},
+) : ZulipViewModel<Unit>(pauseEventSync, resumeEventSync) {
     constructor(globalStore: GlobalStore, streamId: Int, streamName: String) : this(
         streamId = streamId,
         streamName = streamName,
         cachedTopics = { globalStore.loadTopics(streamId) },
         refreshTopics = { globalStore.refreshTopics(streamId) },
         connectionState = { globalStore.activeStore.value?.connectionState?.value },
+        pauseEventSync = globalStore::pauseEventSync,
+        resumeEventSync = globalStore::resumeEventSync,
     )
 
     private val _uiState = MutableStateFlow(TopicListUiState(title = streamName))

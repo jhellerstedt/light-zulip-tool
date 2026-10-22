@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.IOException
 
 fun shouldDowngradeIdleQueueTimeout(error: Throwable): Boolean {
     val apiError = error as? ZulipApiException.ApiError ?: return false
@@ -32,7 +33,25 @@ fun shouldDowngradeIdleQueueTimeout(error: Throwable): Boolean {
 fun shouldReregisterEventQueue(error: Throwable): Boolean {
     val apiError = error as? ZulipApiException.ApiError ?: return false
     if (apiError.code.equals("BAD_EVENT_QUEUE_ID", ignoreCase = true)) return true
-    return apiError.message?.contains("Bad event queue ID", ignoreCase = true) == true
+    val message = apiError.message ?: return false
+    return message.contains("Bad event queue ID", ignoreCase = true) ||
+        message.contains("was not in this queue", ignoreCase = true)
+}
+
+internal enum class EventPollFailure {
+    QueueLost,
+    Transient,
+    Stopped,
+}
+
+internal fun classifyEventPollFailure(error: Throwable): EventPollFailure {
+    if (shouldReregisterEventQueue(error)) return EventPollFailure.QueueLost
+    if (error is ZulipApiException.Network || error is IOException) return EventPollFailure.Transient
+    val apiError = error as? ZulipApiException.ApiError ?: return EventPollFailure.Transient
+    if (apiError.statusCode == 408 || apiError.statusCode == 429 || apiError.statusCode >= 500) {
+        return EventPollFailure.Transient
+    }
+    return EventPollFailure.Stopped
 }
 
 class GlobalStore(
@@ -58,6 +77,7 @@ class GlobalStore(
 ) {
     private val poller = EventPoller(scope, gateway, coordinator)
     private val switchMutex = Mutex()
+    private var eventSyncPaused = false
 
     private val stores = mutableMapOf<Long, ZulipStore>()
     private val clients = mutableMapOf<Long, ZulipClient>()
@@ -115,6 +135,24 @@ class GlobalStore(
 
     suspend fun discardOutboxMessage(messageId: String) {
         outboxRepository?.discard(messageId)
+    }
+
+    fun pauseEventSync() {
+        eventSyncPaused = true
+        poller.stop()
+    }
+
+    fun resumeEventSync() {
+        eventSyncPaused = false
+        val store = _activeStore.value ?: return
+        startEventSyncIfNeeded(store)
+    }
+
+    private fun startEventSyncIfNeeded(store: ZulipStore) {
+        if (eventSyncPaused) return
+        if (_activeStore.value !== store) return
+        if (poller.isRunning) return
+        poller.start(store)
     }
 
     suspend fun initialize(): Result<ZulipStore> {
@@ -236,13 +274,13 @@ class GlobalStore(
                         // `store` is still the active one, otherwise this would silently
                         // hijack the poller back onto a stale/previous account.
                         if (_activeStore.value === store) {
-                            poller.start(store)
+                            startEventSyncIfNeeded(store)
                         }
                     }
             }
         } else {
             coordinator.register(store).getOrThrow()
-            poller.start(store)
+            startEventSyncIfNeeded(store)
         }
         return store
     }

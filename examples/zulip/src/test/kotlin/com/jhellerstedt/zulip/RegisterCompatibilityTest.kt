@@ -42,6 +42,17 @@ class RegisterCompatibilityTest {
     }
 
     @Test
+    fun detectsPrunedEventQueueError() {
+        val error = ZulipApiException.ApiError(
+            statusCode = 400,
+            code = "BAD_REQUEST",
+            message = "Event 9 was not in this queue",
+        )
+
+        assertTrue(shouldReregisterEventQueue(error))
+    }
+
+    @Test
     fun ignoresUnrelatedApiErrorsForEventQueueReregistration() {
         val error = ZulipApiException.ApiError(
             statusCode = 400,

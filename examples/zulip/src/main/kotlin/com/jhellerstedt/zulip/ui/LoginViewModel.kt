@@ -1,7 +1,6 @@
 package com.jhellerstedt.zulip.ui
 
 import androidx.lifecycle.viewModelScope
-import com.thelightphone.sdk.LightViewModel
 import com.jhellerstedt.zulip.api.ZulipClient
 import com.jhellerstedt.zulip.api.routes.fetchApiKey
 import com.jhellerstedt.zulip.api.routes.fetchServerSettings
@@ -36,11 +35,15 @@ data class LoginUiState(
 class LoginViewModel(
     private val globalStore: GlobalStore,
     initialMode: LoginMode,
-) : LightViewModel<Unit>() {
+) : ZulipViewModel<Unit>(globalStore) {
     private val _uiState = MutableStateFlow(LoginUiState(mode = initialMode))
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
 
     fun submitServerUrl(url: String) {
+        ZulipClient.httpsRealmUrlError(url)?.let { message ->
+            _uiState.update { it.copy(errorMessage = message) }
+            return
+        }
         val normalized = ZulipClient.normalizeRealmUrl(url)
         if (normalized.isBlank()) {
             _uiState.update { it.copy(errorMessage = "Enter a server URL") }

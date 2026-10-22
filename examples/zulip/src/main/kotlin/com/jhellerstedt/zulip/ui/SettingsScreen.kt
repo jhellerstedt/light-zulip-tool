@@ -80,6 +80,9 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
                         }
                     }
 
+                    SettingActionRow(label = "Data leaving this phone", onClick = {
+                        navigateTo(screenFactory = { DataDisclosureScreen(it) })
+                    })
                     SettingActionRow(label = "Switch realm", onClick = viewModel::openChooseAccount)
                     SettingActionRow(label = "Add account", onClick = {
                         navigateTo(screenFactory = { LoginScreen(it, LoginMode.ServerUrl) })

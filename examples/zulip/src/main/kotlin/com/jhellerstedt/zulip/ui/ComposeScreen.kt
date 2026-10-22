@@ -1,8 +1,5 @@
 package com.jhellerstedt.zulip.ui
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -25,7 +22,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -34,19 +30,13 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import com.thelightphone.lp3Keyboard.ui.CapsLockedLayout
-import com.thelightphone.lp3Keyboard.ui.DefaultLp3KeyboardViewModel
-import com.thelightphone.lp3Keyboard.ui.EmojiLayout
-import com.thelightphone.lp3Keyboard.ui.ExtendedCharKeyboard
 import com.thelightphone.lp3Keyboard.ui.KeyboardOptions
 import com.thelightphone.lp3Keyboard.ui.LayoutOptions
-import com.thelightphone.lp3Keyboard.ui.LowerCaseLayout
-import com.thelightphone.lp3Keyboard.ui.Lp3RepeatableKeyboardCallback
-import com.thelightphone.lp3Keyboard.ui.Lp3KeyboardViewModel
-import com.thelightphone.lp3Keyboard.ui.NumberLayout
 import com.thelightphone.lp3Keyboard.ui.SpecialKey
-import com.thelightphone.lp3Keyboard.ui.SymbolsLayout
-import com.thelightphone.lp3Keyboard.ui.UpperCaseLayout
+import com.thelightphone.lp3Keyboard.ui.layout.EnShared
+import com.thelightphone.lp3Keyboard.ui.viewmodel.EnQwertyLp3KeyboardViewModel
+import com.thelightphone.lp3Keyboard.ui.viewmodel.Lp3KeyboardViewModel
+import com.thelightphone.lp3Keyboard.ui.viewmodel.Lp3RepeatableKeyboardCallback
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.rememberKeyboardOptions
@@ -109,23 +99,6 @@ class ComposeScreen(
             if (state.sent) {
                 viewModel.consumeSent()
                 goBack()
-            }
-        }
-
-        val currentAttachments = rememberUpdatedState(state.attachments)
-        val photoPickerLauncher = rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.PickMultipleVisualMedia(),
-        ) { uris ->
-            if (uris.isEmpty()) return@rememberLauncherForActivityResult
-            copyPickedPhotosToDrafts(
-                lightContext = lightContext,
-                uris = uris,
-                filesDir = lightContext.filesDir,
-            ).onSuccess { drafts ->
-                deleteDraftFiles(currentAttachments.value)
-                viewModel.replaceAttachments(drafts)
-            }.onFailure { error ->
-                viewModel.showError(error.message ?: "Failed to load selected photos")
             }
         }
 
@@ -212,20 +185,7 @@ class ComposeScreen(
                                 onClick = if (state.isSending) null else { { goBack() } },
                                 contentDescription = "Back",
                             ),
-                            LightBarButton.Text(
-                                text = "PHOTO",
-                                onClick = if (state.isSending) {
-                                    null
-                                } else {
-                                    {
-                                        photoPickerLauncher.launch(
-                                            PickVisualMediaRequest(
-                                                ActivityResultContracts.PickVisualMedia.ImageOnly,
-                                            ),
-                                        )
-                                    }
-                                },
-                            ),
+                            null,
                             LightBarButton.Text(
                                 text = if (state.isSending) "QUEUEING" else "SEND",
                                 onClick = if (state.isSending) {
@@ -357,16 +317,12 @@ private fun ComposeKeyboard(
     val keyboardCallback = remember(textFieldState, onEdit) {
         ComposeKeyboardCallback(textFieldState, onEdit)
     }
-    val keyboardViewModel: Lp3KeyboardViewModel = remember(editorKey, keyboardCallback, keyboardOptionsFlow) {
-        DefaultLp3KeyboardViewModel(
+    val keyboardViewModel: Lp3KeyboardViewModel<Unit> = remember(editorKey, keyboardCallback, keyboardOptionsFlow) {
+        EnQwertyLp3KeyboardViewModel(
             keyboardCallback,
             keyboardOptionsFlow = keyboardOptionsFlow,
-            optionsForLayout = {
-                val showCloseButton = when (it) {
-                    EmojiLayout, is ExtendedCharKeyboard -> true
-                    CapsLockedLayout, LowerCaseLayout, NumberLayout, SymbolsLayout, UpperCaseLayout -> false
-                }
-                LayoutOptions(showCloseButton)
+            optionsForLayout = { layout ->
+                LayoutOptions(displayCloseButton = layout is EnShared.ExtendedCharKeyboard || layout == EnShared.EmojiLayout)
             },
         )
     }
@@ -425,6 +381,8 @@ private class ComposeKeyboardCallback(
     override fun onSpecialKeyRepeated(specialKey: SpecialKey) {
         if (specialKey == SpecialKey.Space) insertAtCursor(" ")
     }
+
+    override fun onSubmitWord(word: CharSequence) = Unit
 
     private fun insertCodePoint(code: Int) {
         insertAtCursor(buildString { appendCodePoint(code) })

@@ -1,7 +1,6 @@
 package com.jhellerstedt.zulip.ui
 
 import androidx.lifecycle.viewModelScope
-import com.thelightphone.sdk.LightViewModel
 import com.jhellerstedt.zulip.data.StoredZulipAccount
 import com.jhellerstedt.zulip.store.GlobalStore
 import kotlinx.coroutines.Dispatchers
@@ -23,7 +22,7 @@ data class ChooseAccountUiState(
 class ChooseAccountViewModel(
     private val globalStore: GlobalStore,
     private val autoRestoreActiveAccount: Boolean,
-) : LightViewModel<Unit>() {
+) : ZulipViewModel<Unit>(globalStore) {
     private val _uiState = MutableStateFlow(ChooseAccountUiState())
     val uiState: StateFlow<ChooseAccountUiState> = _uiState.asStateFlow()
 

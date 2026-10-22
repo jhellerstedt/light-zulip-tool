@@ -208,6 +208,14 @@ class ZulipClient(
             return url.trimEnd('/')
         }
 
+        fun httpsRealmUrlError(input: String): String? {
+            val trimmed = input.trim()
+            if (trimmed.startsWith("http://", ignoreCase = true)) {
+                return "Server URL must use HTTPS"
+            }
+            return null
+        }
+
         private fun encode(value: String): String =
             java.net.URLEncoder.encode(value, Charsets.UTF_8.name())
     }

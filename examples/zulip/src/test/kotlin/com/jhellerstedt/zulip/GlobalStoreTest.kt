@@ -101,6 +101,76 @@ class GlobalStoreTest {
         storeB.client.close()
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun pauseStopsThePollerUntilResume() = runTest {
+        val gateway = FakeGlobalGateway()
+        gateway.nextRegisterResponse = RegisterQueueResponse(result = "success", queueId = "queue-b")
+        val globalStore = GlobalStore(
+            accountRepository = FakeAccountStore(listOf(fixtureAccount(id = 2L, email = "b@example.com"))),
+            cacheRepository = ZulipCacheRepository(FakeGlobalCacheDao(), nowMillis = { now }),
+            gateway = gateway,
+            scope = backgroundScope,
+        )
+
+        val store = globalStore.switchAccount(2L).getOrThrow()
+        runCurrent()
+        assertEquals(listOf("queue-b"), gateway.eventsCalls)
+
+        globalStore.pauseEventSync()
+        globalStore.resumeEventSync()
+        runCurrent()
+        assertEquals(listOf("queue-b", "queue-b"), gateway.eventsCalls)
+        store.client.close()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun resumeDoesNotRestartAnActivePoller() = runTest {
+        val gateway = FakeGlobalGateway()
+        gateway.nextRegisterResponse = RegisterQueueResponse(result = "success", queueId = "queue-b")
+        val globalStore = GlobalStore(
+            accountRepository = FakeAccountStore(listOf(fixtureAccount(id = 2L, email = "b@example.com"))),
+            cacheRepository = ZulipCacheRepository(FakeGlobalCacheDao(), nowMillis = { now }),
+            gateway = gateway,
+            scope = backgroundScope,
+        )
+
+        val store = globalStore.switchAccount(2L).getOrThrow()
+        runCurrent()
+        globalStore.resumeEventSync()
+        runCurrent()
+        assertEquals(listOf("queue-b"), gateway.eventsCalls)
+        store.client.close()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun backgroundRegisterDoesNotStartThePollerWhilePaused() = runTest {
+        val dao = FakeGlobalCacheDao()
+        seedCachedConversation(dao, accountId = 1L, narrow = Narrow.Channel(10))
+        val gateway = FakeGlobalGateway()
+        gateway.blockOnCall = 1
+        val globalStore = GlobalStore(
+            accountRepository = FakeAccountStore(listOf(fixtureAccount(id = 1L, email = "a@example.com"))),
+            cacheRepository = ZulipCacheRepository(dao, nowMillis = { now }),
+            gateway = gateway,
+            scope = backgroundScope,
+        )
+
+        val store = globalStore.switchAccount(1L).getOrThrow()
+        runCurrent()
+        globalStore.pauseEventSync()
+        gateway.blockedRegister.complete(RegisterQueueResponse(result = "success", queueId = "queue-a"))
+        runCurrent()
+        assertTrue(gateway.eventsCalls.isEmpty())
+
+        globalStore.resumeEventSync()
+        runCurrent()
+        assertEquals(listOf("queue-a"), gateway.eventsCalls)
+        store.client.close()
+    }
+
     @Test
     fun enqueueMessagePersistsThenSchedulesOutboxWorker() = runTest {
         val accountId = 1L

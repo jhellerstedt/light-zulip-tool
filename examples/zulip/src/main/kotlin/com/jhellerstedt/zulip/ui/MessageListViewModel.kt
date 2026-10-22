@@ -1,7 +1,6 @@
 package com.jhellerstedt.zulip.ui
 
 import androidx.lifecycle.viewModelScope
-import com.thelightphone.sdk.LightViewModel
 import com.jhellerstedt.zulip.api.models.ZulipMessage
 import com.jhellerstedt.zulip.store.ConnectionState
 import com.jhellerstedt.zulip.store.GlobalStore
@@ -30,7 +29,9 @@ class MessageListViewModel internal constructor(
     private val markRead: suspend () -> Unit,
     private val storeSnapshot: () -> ZulipStore? = { null },
     private val connectionState: () -> ConnectionState? = { null },
-) : LightViewModel<Unit>() {
+    pauseEventSync: () -> Unit = {},
+    resumeEventSync: () -> Unit = {},
+) : ZulipViewModel<Unit>(pauseEventSync, resumeEventSync) {
     constructor(globalStore: GlobalStore, narrow: Narrow) : this(
         narrow = narrow,
         cachedMessages = { globalStore.loadMessages(narrow) },
@@ -38,6 +39,8 @@ class MessageListViewModel internal constructor(
         markRead = { globalStore.activeStore.value?.markNarrowRead(narrow) },
         storeSnapshot = { globalStore.activeStore.value },
         connectionState = { globalStore.activeStore.value?.connectionState?.value },
+        pauseEventSync = globalStore::pauseEventSync,
+        resumeEventSync = globalStore::resumeEventSync,
     )
 
     private val _uiState = MutableStateFlow(MessageListUiState())

@@ -20,18 +20,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.TextRange
-import com.thelightphone.lp3Keyboard.ui.CapsLockedLayout
-import com.thelightphone.lp3Keyboard.ui.DefaultLp3KeyboardViewModel
-import com.thelightphone.lp3Keyboard.ui.EmojiLayout
-import com.thelightphone.lp3Keyboard.ui.ExtendedCharKeyboard
 import com.thelightphone.lp3Keyboard.ui.LayoutOptions
-import com.thelightphone.lp3Keyboard.ui.LowerCaseLayout
-import com.thelightphone.lp3Keyboard.ui.Lp3KeyboardViewModel
-import com.thelightphone.lp3Keyboard.ui.Lp3RepeatableKeyboardCallback
-import com.thelightphone.lp3Keyboard.ui.NumberLayout
 import com.thelightphone.lp3Keyboard.ui.SpecialKey
-import com.thelightphone.lp3Keyboard.ui.SymbolsLayout
-import com.thelightphone.lp3Keyboard.ui.UpperCaseLayout
+import com.thelightphone.lp3Keyboard.ui.layout.EnShared
+import com.thelightphone.lp3Keyboard.ui.viewmodel.EnQwertyLp3KeyboardViewModel
+import com.thelightphone.lp3Keyboard.ui.viewmodel.Lp3KeyboardViewModel
+import com.thelightphone.lp3Keyboard.ui.viewmodel.Lp3RepeatableKeyboardCallback
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.rememberKeyboardOptions
@@ -72,16 +66,12 @@ class ChooseParticipantsScreen(sealedActivity: SealedLightActivity) :
         val queryState = rememberTextFieldState(state.query)
         val keyboardOptionsFlow = rememberKeyboardOptions()
         val keyboardCallback = remember(queryState) { ParticipantKeyboardCallback(queryState) }
-        val keyboardViewModel: Lp3KeyboardViewModel = remember(keyboardCallback, keyboardOptionsFlow) {
-            DefaultLp3KeyboardViewModel(
+        val keyboardViewModel: Lp3KeyboardViewModel<Unit> = remember(keyboardCallback, keyboardOptionsFlow) {
+            EnQwertyLp3KeyboardViewModel(
                 keyboardCallback,
                 keyboardOptionsFlow = keyboardOptionsFlow,
-                optionsForLayout = {
-                    val showCloseButton = when (it) {
-                        EmojiLayout, is ExtendedCharKeyboard -> true
-                        CapsLockedLayout, LowerCaseLayout, NumberLayout, SymbolsLayout, UpperCaseLayout -> false
-                    }
-                    LayoutOptions(showCloseButton)
+                optionsForLayout = { layout ->
+                    LayoutOptions(displayCloseButton = layout is EnShared.ExtendedCharKeyboard || layout == EnShared.EmojiLayout)
                 },
             )
         }
@@ -300,6 +290,8 @@ private class ParticipantKeyboardCallback(
     override fun onSpecialKeyRepeated(specialKey: SpecialKey) {
         if (specialKey == SpecialKey.Space) insertAtCursor(" ")
     }
+
+    override fun onSubmitWord(word: CharSequence) = Unit
 
     private fun insertAtCursor(text: String) {
         state.edit {

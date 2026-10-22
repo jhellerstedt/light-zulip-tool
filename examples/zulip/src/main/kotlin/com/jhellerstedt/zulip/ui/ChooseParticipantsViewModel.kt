@@ -1,7 +1,6 @@
 package com.jhellerstedt.zulip.ui
 
 import androidx.lifecycle.viewModelScope
-import com.thelightphone.sdk.LightViewModel
 import com.jhellerstedt.zulip.store.DirectMessageConversation
 import com.jhellerstedt.zulip.api.models.ZulipUser
 import com.jhellerstedt.zulip.store.GlobalStore
@@ -61,8 +60,14 @@ private fun mergeRecentUserIds(
 class ChooseParticipantsViewModel internal constructor(
     private val activeStore: Flow<ZulipStore?>,
     private val observationScope: CoroutineScope? = null,
-) : LightViewModel<Unit>() {
-    constructor(globalStore: GlobalStore) : this(globalStore.activeStore)
+    pauseEventSync: () -> Unit = {},
+    resumeEventSync: () -> Unit = {},
+) : ZulipViewModel<Unit>(pauseEventSync, resumeEventSync) {
+    constructor(globalStore: GlobalStore) : this(
+        activeStore = globalStore.activeStore,
+        pauseEventSync = globalStore::pauseEventSync,
+        resumeEventSync = globalStore::resumeEventSync,
+    )
 
     private val _uiState = MutableStateFlow(
         ChooseParticipantsUiState(),

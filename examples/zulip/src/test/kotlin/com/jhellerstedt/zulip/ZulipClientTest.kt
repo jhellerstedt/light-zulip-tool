@@ -24,4 +24,18 @@ class ZulipClientTest {
         assertEquals(OutboxFailureKind.TRANSIENT, classifyOutboxFailure(error))
         client.close()
     }
+
+    @Test
+    fun explicitHttpRealmUrlIsRejected() {
+        assertEquals(
+            "Server URL must use HTTPS",
+            ZulipClient.httpsRealmUrlError("http://chat.example.com"),
+        )
+        assertEquals(
+            "Server URL must use HTTPS",
+            ZulipClient.httpsRealmUrlError("  HTTP://chat.example.com/  "),
+        )
+        assertEquals(null, ZulipClient.httpsRealmUrlError("chat.example.com"))
+        assertEquals(null, ZulipClient.httpsRealmUrlError("https://chat.example.com"))
+    }
 }

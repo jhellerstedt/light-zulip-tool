@@ -36,9 +36,10 @@ suspend fun runOutboxJob(
     input: Map<String, String>,
     processor: suspend (Long) -> OutboxRunResult,
 ): LightJobResult {
-    val accountId = input[ACCOUNT_ID_INPUT]?.toLongOrNull() ?: return LightJobResult.Error()
+    val accountId = input[ACCOUNT_ID_INPUT]?.toLongOrNull()
+        ?: return LightJobResult.Error(reason = "Missing account id")
     return when (processor(accountId)) {
-        OutboxRunResult.Success -> LightJobResult.Success()
+        OutboxRunResult.Success -> LightJobResult.Success(outputFilePath = null, message = null)
         OutboxRunResult.Retry -> LightJobResult.Retry
     }
 }

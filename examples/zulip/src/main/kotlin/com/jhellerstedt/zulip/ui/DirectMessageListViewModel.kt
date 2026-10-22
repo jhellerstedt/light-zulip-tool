@@ -1,7 +1,6 @@
 package com.jhellerstedt.zulip.ui
 
 import androidx.lifecycle.viewModelScope
-import com.thelightphone.sdk.LightViewModel
 import com.jhellerstedt.zulip.store.GlobalStore
 import com.jhellerstedt.zulip.store.Narrow
 import kotlinx.coroutines.Job
@@ -17,7 +16,7 @@ data class DirectMessageRow(
 
 class DirectMessageListViewModel(
     private val globalStore: GlobalStore,
-) : LightViewModel<Unit>() {
+) : ZulipViewModel<Unit>(globalStore) {
     private val _rows = MutableStateFlow<List<DirectMessageRow>>(emptyList())
     val rows: StateFlow<List<DirectMessageRow>> = _rows.asStateFlow()
 

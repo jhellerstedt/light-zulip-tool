@@ -1,10 +1,6 @@
 package com.jhellerstedt.zulip.ui
 
-import android.net.Uri
-import com.thelightphone.sdk.SealedLightContext
 import java.io.File
-
-private const val COMPOSE_ATTACHMENT_DIR = "zulip-compose-attachments"
 
 data class ComposeAttachmentDraft(
     val displayName: String,
@@ -51,49 +47,6 @@ private fun sanitizeAttachmentName(displayName: String): String {
     return displayName.replace("[", "").replace("]", "")
 }
 
-fun copyPickedPhotosToDrafts(
-    lightContext: SealedLightContext,
-    uris: List<Uri>,
-    filesDir: File,
-): Result<List<ComposeAttachmentDraft>> = runCatching {
-    val attachmentRoot = File(filesDir, COMPOSE_ATTACHMENT_DIR).also { it.mkdirs() }
-    val createdFiles = mutableListOf<File>()
-    try {
-        uris.mapIndexed { index, uri ->
-            val mimeType = lightContext.getContentMimeType(uri).orEmpty()
-            require(mimeType.startsWith("image/")) { "Selected file must be an image" }
-
-            val displayName = lightContext.getContentDisplayName(uri)
-                ?.takeIf { it.isNotBlank() }
-                ?: defaultAttachmentName(index, mimeType)
-            val targetFile = File(
-                attachmentRoot,
-                "${System.currentTimeMillis()}-$index-${sanitizeFileName(displayName)}",
-            )
-            check(lightContext.copyUriToFile(uri, targetFile)) { "Unable to open selected photo" }
-            createdFiles += targetFile
-            ComposeAttachmentDraft(
-                displayName = displayName,
-                mimeType = mimeType,
-                filePath = targetFile.absolutePath,
-                sourceIndex = index,
-            )
-        }
-    } catch (error: Throwable) {
-        createdFiles.forEach { it.delete() }
-        throw error
-    }
-}
-
 fun deleteDraftFiles(attachments: List<ComposeAttachmentDraft>) {
     attachments.forEach { File(it.filePath).delete() }
-}
-
-private fun defaultAttachmentName(index: Int, mimeType: String): String {
-    val extension = mimeType.substringAfter('/', "jpg").ifBlank { "jpg" }
-    return "photo-${index + 1}.$extension"
-}
-
-private fun sanitizeFileName(value: String): String {
-    return value.replace(Regex("[^A-Za-z0-9._-]"), "_")
 }

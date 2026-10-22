@@ -1,7 +1,6 @@
 package com.jhellerstedt.zulip.ui
 
 import androidx.lifecycle.viewModelScope
-import com.thelightphone.sdk.LightViewModel
 import com.jhellerstedt.zulip.api.models.ZulipStream
 import com.jhellerstedt.zulip.store.GlobalStore
 import kotlinx.coroutines.Job
@@ -12,7 +11,7 @@ import kotlinx.coroutines.launch
 
 class StreamListViewModel(
     private val globalStore: GlobalStore,
-) : LightViewModel<Unit>() {
+) : ZulipViewModel<Unit>(globalStore) {
     private val _streams = MutableStateFlow<List<ZulipStream>>(emptyList())
     val streams: StateFlow<List<ZulipStream>> = _streams.asStateFlow()
     private var observerJob: Job? = null

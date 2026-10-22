@@ -1,7 +1,6 @@
 package com.jhellerstedt.zulip.ui
 
 import androidx.lifecycle.viewModelScope
-import com.thelightphone.sdk.LightViewModel
 import com.jhellerstedt.zulip.api.models.ZulipStream
 import com.jhellerstedt.zulip.api.models.ZulipUser
 import com.jhellerstedt.zulip.store.GlobalStore
@@ -44,11 +43,15 @@ class ComposeViewModel internal constructor(
     ) -> Result<String> = { _, _, _, _ ->
         error("enqueueMessage is not configured")
     },
-) : LightViewModel<Unit>() {
+    pauseEventSync: () -> Unit = {},
+    resumeEventSync: () -> Unit = {},
+) : ZulipViewModel<Unit>(pauseEventSync, resumeEventSync) {
     constructor(globalStore: GlobalStore, narrow: Narrow) : this(
         activeStore = globalStore.activeStore,
         narrow = narrow,
         enqueueMessage = globalStore::enqueueMessage,
+        pauseEventSync = globalStore::pauseEventSync,
+        resumeEventSync = globalStore::resumeEventSync,
     )
 
     private val _uiState = MutableStateFlow(ComposeUiState())
