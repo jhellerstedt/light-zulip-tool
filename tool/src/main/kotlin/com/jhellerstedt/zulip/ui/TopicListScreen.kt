@@ -1,6 +1,7 @@
 package com.jhellerstedt.zulip.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,6 +12,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.unit.TextUnit
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.ui.LightBarButton
@@ -24,6 +28,7 @@ import com.thelightphone.sdk.ui.LightThemeController
 import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
+import com.thelightphone.sdk.ui.designVerticalPxToSp
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 import com.jhellerstedt.zulip.ZulipServices
@@ -103,7 +108,14 @@ class TopicListScreen(
                                         }
                                         .padding(vertical = 0.75f.gridUnitsAsDp()),
                                 ) {
-                                    LightText(text = topic.name, variant = LightTextVariant.Heading)
+                                    if (isGeneralChatTopic(topic.name)) {
+                                        BasicText(
+                                            text = topicDisplayName(topic.name),
+                                            style = generalChatHeadingStyle(),
+                                        )
+                                    } else {
+                                        LightText(text = topic.name, variant = LightTextVariant.Heading)
+                                    }
                                 }
                             }
                         }
@@ -132,3 +144,20 @@ class TopicListScreen(
         }
     }
 }
+
+@Composable
+private fun generalChatHeadingStyle(): TextStyle {
+    val heading = LightThemeTokens.typography.heading
+    return heading.copy(
+        color = LightThemeTokens.colors.content,
+        fontStyle = FontStyle.Italic,
+        fontSize = heading.fontSize.scaledDesignSp(),
+        lineHeight = heading.lineHeight.scaledDesignSp(),
+        letterSpacing = heading.letterSpacing.scaledDesignSp(),
+    )
+}
+
+@Composable
+private fun TextUnit.scaledDesignSp(): TextUnit =
+    if (this == TextUnit.Unspecified) this else value.designVerticalPxToSp()
+
