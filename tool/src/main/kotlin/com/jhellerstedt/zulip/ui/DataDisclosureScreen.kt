@@ -76,6 +76,7 @@ class DataDisclosureScreen(sealedActivity: SealedLightActivity) :
                         "On this phone, the API key is stored encrypted in the Android keystore. Recent messages and the realm directory are kept in a local cache so the tool can open offline.",
                     )
                     DisclosureParagraph("There is no analytics and no push notification.")
+                    DisclosureParagraph("This version does not read the photo album.")
                 }
 
                 LightBottomBar(items = listOf(null, null, null))
