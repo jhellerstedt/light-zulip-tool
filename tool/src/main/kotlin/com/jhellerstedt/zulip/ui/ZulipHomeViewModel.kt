@@ -2,6 +2,7 @@ package com.jhellerstedt.zulip.ui
 
 import androidx.lifecycle.viewModelScope
 import com.thelightphone.sdk.SimpleLightScreen
+import com.jhellerstedt.zulip.TOOL_DISPLAY_NAME
 import com.jhellerstedt.zulip.data.PendingMessageEntity
 import com.jhellerstedt.zulip.store.ConnectionState
 import com.jhellerstedt.zulip.store.GlobalStore
@@ -16,7 +17,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class ZulipHomeUiState(
-    val realmTitle: String = "Zulip",
+    val realmTitle: String = TOOL_DISPLAY_NAME,
     val streamCount: Int = 0,
     val directMessageCount: Int = 0,
     val isLoading: Boolean = false,
@@ -41,7 +42,7 @@ class ZulipHomeViewModel(
         viewModelScope.launch {
             globalStore.activeAccount.collect { account ->
                 _uiState.update {
-                    it.copy(realmTitle = account?.realmName?.ifBlank { account.realmUrl } ?: "Zulip")
+                    it.copy(realmTitle = account?.realmName?.ifBlank { account.realmUrl } ?: TOOL_DISPLAY_NAME)
                 }
             }
         }
@@ -110,7 +111,7 @@ class ZulipHomeViewModel(
         val store = globalStore.activeStore.value
         _uiState.update {
             it.copy(
-                realmTitle = globalStore.activeAccount.value?.realmName ?: "Zulip",
+                realmTitle = globalStore.activeAccount.value?.realmName ?: TOOL_DISPLAY_NAME,
                 streamCount = store?.streamsList?.value?.size ?: 0,
                 directMessageCount = store?.recentDirectMessages?.value?.size ?: 0,
             )

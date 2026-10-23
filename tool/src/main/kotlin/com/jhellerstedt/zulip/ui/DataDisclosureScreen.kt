@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import com.jhellerstedt.zulip.UNOFFICIAL_DISCLAIMER
 import com.jhellerstedt.zulip.ZulipServices
 import com.jhellerstedt.zulip.store.GlobalStore
 import com.thelightphone.sdk.LightScreen
@@ -64,6 +65,7 @@ class DataDisclosureScreen(sealedActivity: SealedLightActivity) :
                         .fillMaxWidth()
                         .padding(horizontal = 1f.gridUnitsAsDp()),
                 ) {
+                    DisclosureParagraph(UNOFFICIAL_DISCLAIMER)
                     DisclosureParagraph(
                         "This tool sends data only to the Zulip server URL you enter. That address must use HTTPS.",
                     )

@@ -29,6 +29,7 @@ import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
+import com.jhellerstedt.zulip.TOOL_DISPLAY_NAME
 import com.jhellerstedt.zulip.ZulipServices
 
 @InitialScreen
@@ -97,7 +98,7 @@ class ChooseAccountScreen : LightScreen<Unit, ChooseAccountViewModel> {
                                 onClick = { goBack() },
                             )
                         },
-                        center = LightTopBarCenter.Text("Zulip"),
+                        center = LightTopBarCenter.Text(TOOL_DISPLAY_NAME),
                         modifier = Modifier.padding(bottom = 1f.gridUnitsAsDp()),
                     )
 
