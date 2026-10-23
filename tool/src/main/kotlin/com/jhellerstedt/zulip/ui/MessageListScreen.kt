@@ -30,7 +30,7 @@ import com.jhellerstedt.zulip.ZulipServices
 import com.jhellerstedt.zulip.store.ConnectionState
 import com.jhellerstedt.zulip.store.Narrow
 import com.jhellerstedt.zulip.util.formatTimestamp
-import com.jhellerstedt.zulip.util.stripHtml
+import com.jhellerstedt.zulip.util.presentMessageContent
 
 class MessageListScreen(
     sealedActivity: SealedLightActivity,
@@ -103,7 +103,7 @@ class MessageListScreen(
                                     lighten = true,
                                 )
                                 LightText(
-                                    text = stripHtml(message.content),
+                                    text = presentMessageContent(message.content),
                                     variant = LightTextVariant.Copy,
                                 )
                             }

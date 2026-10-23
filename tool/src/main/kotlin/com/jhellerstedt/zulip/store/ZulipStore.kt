@@ -17,7 +17,7 @@ import com.jhellerstedt.zulip.data.CachedAccountSnapshot
 import com.jhellerstedt.zulip.data.StoredZulipAccount
 import com.jhellerstedt.zulip.ui.UploadedAttachmentLink
 import com.jhellerstedt.zulip.ui.buildComposeMessageBody
-import com.jhellerstedt.zulip.util.stripHtml
+import com.jhellerstedt.zulip.util.presentMessageContent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -392,7 +392,7 @@ class ZulipStore(
         unreadByNarrow.forEach { (key, count) ->
             if (count <= 0) return@forEach
             val narrow = narrowFromCacheKey(key) ?: return@forEach
-            val preview = messagesByNarrow[key]?.lastOrNull()?.let { stripHtml(it.content) }
+            val preview = messagesByNarrow[key]?.lastOrNull()?.let { presentMessageContent(it.content) }
             conversations.add(
                 InboxConversation(
                     narrow = narrow,
