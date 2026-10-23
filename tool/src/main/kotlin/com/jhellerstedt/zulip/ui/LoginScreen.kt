@@ -8,6 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
 import com.thelightphone.sdk.LightScreen
@@ -44,7 +45,6 @@ class LoginScreen(
     override fun Content() {
         val themeColors by LightThemeController.colors.collectAsState()
         val state by viewModel.uiState.collectAsState()
-        val textFieldState = rememberTextFieldState("")
         val keyboardOptionsFlow = rememberKeyboardOptions()
 
         LaunchedEffect(state.navigateHome) {
@@ -61,7 +61,9 @@ class LoginScreen(
                     .fillMaxSize()
                     .background(LightThemeTokens.colors.background),
             ) {
-                when (state.mode) {
+                key(state.editorSession) {
+                    val textFieldState = rememberTextFieldState("")
+                    when (state.mode) {
                     LoginMode.ServerUrl -> {
                         LightTextInputEditor(
                             title = "Server URL",
@@ -118,6 +120,7 @@ class LoginScreen(
                                 modifier = Modifier.fillMaxSize(),
                             )
                     }
+                }
                 }
 
                 if (state.isLoading) {
