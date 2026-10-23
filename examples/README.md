@@ -6,7 +6,6 @@
 | `weather` | `com.thelightphone.weather` | weather tool via Open-Meteo API |
 | `authenticator` | `com.thelightphone.authenticator` | 2FA authenticator |
 | `audio-demo` | `com.thelightphone.audiodemo` | audio SDK showcase: player, recorder, capture, tone |
-| `zulip` | `com.jhellerstedt.zulip` | Zulip chat client with multi-realm support |
 
 ## How to run on device
 
@@ -22,9 +21,6 @@ adb shell am start -n com.thelightphone.authenticator/com.thelightphone.sdk.Ligh
 
 ./gradlew :examples:audio-demo:installDebug
 adb shell am start -n com.thelightphone.audiodemo/com.thelightphone.sdk.LightActivity
-
-./gradlew :examples:zulip:installDebug
-adb shell am start -n com.jhellerstedt.zulip/com.thelightphone.sdk.LightActivity
 ```
 
 To run an example on the [LightOS emulator](../docs/system_app), swap the `serverPackage` lines in its `lighttool.toml`. Then build with `-DlightSdk.allowAltServerPackage=true`:

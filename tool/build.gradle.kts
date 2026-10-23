@@ -49,9 +49,6 @@ android {
             signingConfig = signingConfigs.getByName("lightsdkDev")
         }
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
             signingConfig = signingConfigs.getByName("lightsdkDev")
         }
     }
@@ -76,6 +73,7 @@ kotlin {
 dependencies {
     implementation(project(":sdk:client"))
     testImplementation(libs.kotlin.test)
+    testImplementation(libs.kotlinx.coroutines.test)
     ksp(libs.androidx.room.compiler)
 }
 
