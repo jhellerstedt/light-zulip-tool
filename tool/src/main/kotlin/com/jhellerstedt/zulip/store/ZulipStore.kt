@@ -56,6 +56,7 @@ class ZulipStore(
     private val users = mutableMapOf<Int, ZulipUser>()
     private val messagesByNarrow = mutableMapOf<String, MutableList<ZulipMessage>>()
     private val unreadByNarrow = mutableMapOf<String, Int>()
+    private val unreadLatestByStream = mutableMapOf<Int, Int>()
 
     private val _inbox = MutableStateFlow<List<InboxConversation>>(emptyList())
     val inbox: StateFlow<List<InboxConversation>> = _inbox.asStateFlow()
@@ -92,6 +93,7 @@ class ZulipStore(
             messagesByNarrow[narrow.cacheKey()] = cachedMessages.sortedBy { it.id }.toMutableList()
         }
         unreadByNarrow.clear()
+        unreadLatestByStream.clear()
         snapshot.conversations.forEach { conversation ->
             if (conversation.unreadCount > 0) {
                 unreadByNarrow[conversation.narrowKey] = conversation.unreadCount
@@ -114,12 +116,13 @@ class ZulipStore(
             .map { (userIds, entries) -> DirectMessageConversation(userIds, entries.maxOf { it.maxMessageId }) }
             .sortedByDescending { it.maxMessageId }
         publishSelectableUsers()
-        _streamsList.value = streams.values.sortedBy { it.name.lowercase() }
+        publishStreams()
         rebuildInbox()
     }
 
     fun applyMessages(narrow: Narrow, messages: List<ZulipMessage>) {
         messagesByNarrow[narrow.cacheKey()] = messages.sortedBy { it.id }.toMutableList()
+        publishStreams()
     }
 
     fun narrowForEvent(event: com.jhellerstedt.zulip.api.models.ZulipEvent): Narrow? =
@@ -170,7 +173,7 @@ class ZulipStore(
         response.messages.forEach { addMessage(it) }
         rebuildUnreadFromSnapshot(response.unreadMsgs)
         publishSelectableUsers()
-        _streamsList.value = streams.values.sortedBy { it.name.lowercase() }
+        publishStreams()
         rebuildInbox()
     }
 
@@ -190,9 +193,10 @@ class ZulipStore(
                     }
                     "remove" -> event.subscriptions?.forEach { stream ->
                         streams.remove(stream.streamId)
+                        unreadLatestByStream.remove(stream.streamId)
                     }
                 }
-                _streamsList.value = streams.values.sortedBy { it.name.lowercase() }
+                publishStreams()
             }
             "update_message_flags" -> {
                 if (event.operation == "add" && event.flag == "read") {
@@ -206,6 +210,9 @@ class ZulipStore(
             }
             "heartbeat" -> Unit
         }
+        if (event.type == "message") {
+            publishStreams()
+        }
         rebuildInbox()
     }
 
@@ -214,6 +221,7 @@ class ZulipStore(
         val response = getMessages(client, narrow)
         val sorted = response.messages.sortedBy { it.id }
         messagesByNarrow[key] = sorted.toMutableList()
+        publishStreams()
         sorted
     }
 
@@ -370,6 +378,7 @@ class ZulipStore(
 
     private fun rebuildUnreadFromSnapshot(unreadMsgs: com.jhellerstedt.zulip.api.models.UnreadMsgs?) {
         unreadByNarrow.clear()
+        unreadLatestByStream.clear()
         unreadMsgs?.streams?.forEach { unreadStream ->
             val narrow = if (unreadStream.topic.isBlank()) {
                 Narrow.Channel(unreadStream.streamId)
@@ -377,6 +386,10 @@ class ZulipStore(
                 Narrow.Topic(unreadStream.streamId, unreadStream.topic)
             }
             unreadByNarrow[narrow.cacheKey()] = unreadStream.unreadIds.size
+            val latestUnread = unreadStream.unreadIds.maxOrNull() ?: 0
+            if (latestUnread > (unreadLatestByStream[unreadStream.streamId] ?: 0)) {
+                unreadLatestByStream[unreadStream.streamId] = latestUnread
+            }
         }
         unreadMsgs?.pms?.forEach { pm ->
             val key = Narrow.Dm(listOf(pm.senderId)).cacheKey()
@@ -419,6 +432,28 @@ class ZulipStore(
         _inbox.value = conversations.sortedWith(
             compareByDescending<InboxConversation> { it.unreadCount }
                 .thenBy { it.title.lowercase() },
+        )
+    }
+
+    private fun publishStreams() {
+        val latestByStream = mutableMapOf<Int, Int>()
+        fun note(streamId: Int, messageId: Int) {
+            if (messageId > (latestByStream[streamId] ?: 0)) {
+                latestByStream[streamId] = messageId
+            }
+        }
+        unreadLatestByStream.forEach { (streamId, messageId) -> note(streamId, messageId) }
+        messagesByNarrow.forEach { (key, messages) ->
+            val streamId = when (val narrow = narrowFromCacheKey(key)) {
+                is Narrow.Topic -> narrow.streamId
+                is Narrow.Channel -> narrow.streamId
+                else -> return@forEach
+            }
+            messages.maxOfOrNull { it.id }?.let { note(streamId, it) }
+        }
+        _streamsList.value = streams.values.sortedWith(
+            compareByDescending<ZulipStream> { latestByStream[it.streamId] ?: 0 }
+                .thenBy { it.name.lowercase() },
         )
     }
 
