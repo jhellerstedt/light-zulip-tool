@@ -73,7 +73,9 @@ kotlin {
 dependencies {
     implementation(project(":sdk:client"))
     testImplementation(libs.kotlin.test)
-    testImplementation(libs.kotlinx.coroutines.test)
+    // Do not use libs.kotlinx.coroutines.test. The library builder's SDK catalog
+    // has no such accessor, so `.test` is parsed as the Kotlin source set.
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     ksp(libs.androidx.room.compiler)
 }
 
