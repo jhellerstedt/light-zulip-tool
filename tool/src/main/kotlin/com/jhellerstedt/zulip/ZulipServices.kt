@@ -5,7 +5,6 @@ import com.jhellerstedt.zulip.api.ZulipClient
 import com.jhellerstedt.zulip.api.ZulipGateway
 import com.jhellerstedt.zulip.data.AccountRepository
 import com.jhellerstedt.zulip.data.FileOutboxFileStore
-import com.jhellerstedt.zulip.data.MIGRATION_1_2
 import com.jhellerstedt.zulip.data.ZulipCacheRepository
 import com.jhellerstedt.zulip.data.ZulipDatabase
 import com.jhellerstedt.zulip.store.GlobalStore
@@ -47,10 +46,12 @@ object ZulipServices {
 
     fun database(context: SealedLightContext): ZulipDatabase {
         return database ?: synchronized(this) {
+            // The library SDK opens the database with the class and name only.
+            // A new install creates the current schema. Version stays 2 so a
+            // database that already migrated locally still opens.
             database ?: context.buildDatabase(
                 ZulipDatabase::class.java,
                 AccountRepository.DATABASE_NAME,
-                MIGRATION_1_2,
             ).also { database = it }
         }
     }
