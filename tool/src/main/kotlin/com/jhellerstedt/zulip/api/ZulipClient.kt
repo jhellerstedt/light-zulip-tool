@@ -1,0 +1,227 @@
+package com.jhellerstedt.zulip.api
+
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.HttpRequestTimeoutException
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.timeout
+import io.ktor.client.request.basicAuth
+import io.ktor.client.request.forms.FormDataContent
+import io.ktor.client.request.forms.MultiPartFormDataContent
+import io.ktor.client.request.forms.formData
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.Headers
+import io.ktor.http.HttpHeaders
+import io.ktor.http.Parameters
+import io.ktor.http.contentType
+import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import java.io.IOException
+
+class ZulipClient(
+    private val realmUrl: String,
+    private val email: String? = null,
+    private val apiKey: String? = null,
+) {
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+    }
+
+    private val client = HttpClient(OkHttp) {
+        install(HttpTimeout)
+        install(ContentNegotiation) {
+            json(json)
+        }
+    }
+
+    val isAuthenticated: Boolean
+        get() = email != null && apiKey != null
+
+    fun withCredentials(email: String, apiKey: String): ZulipClient =
+        ZulipClient(realmUrl, email, apiKey)
+
+    suspend fun get(
+        path: String,
+        params: Map<String, String> = emptyMap(),
+        authenticated: Boolean = isAuthenticated,
+        socketTimeoutMillis: Long? = null,
+    ): String {
+        val query = if (params.isEmpty()) {
+            ""
+        } else {
+            "?" + params.entries.joinToString("&") { (key, value) ->
+                "${encode(key)}=${encode(value)}"
+            }
+        }
+        val response = networkRequest {
+            client.get("$apiBase/$path$query") {
+                if (authenticated) {
+                    requireNotNull(email)
+                    requireNotNull(apiKey)
+                    basicAuth(email, apiKey)
+                }
+                header(HttpHeaders.UserAgent, USER_AGENT)
+                if (socketTimeoutMillis != null) {
+                    timeout {
+                        this.socketTimeoutMillis = socketTimeoutMillis
+                    }
+                }
+            }
+        }
+        return parseResponse(response.status.value, responseBody(response))
+    }
+
+    suspend fun post(
+        path: String,
+        formParams: Map<String, String> = emptyMap(),
+        authenticated: Boolean = isAuthenticated,
+    ): String {
+        val response = networkRequest {
+            client.post("$apiBase/$path") {
+                if (authenticated) {
+                    requireNotNull(email)
+                    requireNotNull(apiKey)
+                    basicAuth(email, apiKey)
+                }
+                header(HttpHeaders.UserAgent, USER_AGENT)
+                contentType(ContentType.Application.FormUrlEncoded)
+                setBody(FormDataContent(Parameters.build {
+                    formParams.forEach { (key, value) -> append(key, value) }
+                }))
+            }
+        }
+        return parseResponse(response.status.value, responseBody(response))
+    }
+
+    suspend fun postMultipart(
+        path: String,
+        fileFieldName: String,
+        fileName: String,
+        mimeType: String,
+        bytes: ByteArray,
+        authenticated: Boolean = isAuthenticated,
+    ): String {
+        val response = networkRequest {
+            client.post("$apiBase/$path") {
+                if (authenticated) {
+                    requireNotNull(email)
+                    requireNotNull(apiKey)
+                    basicAuth(email, apiKey)
+                }
+                header(HttpHeaders.UserAgent, USER_AGENT)
+                setBody(
+                    MultiPartFormDataContent(
+                        formData {
+                            append(
+                                key = fileFieldName,
+                                value = bytes,
+                                headers = Headers.build {
+                                    append(HttpHeaders.ContentType, mimeType)
+                                    append(
+                                        HttpHeaders.ContentDisposition,
+                                        "form-data; name=\"$fileFieldName\"; filename=\"$fileName\"",
+                                    )
+                                },
+                            )
+                        },
+                    ),
+                )
+            }
+        }
+        return parseResponse(response.status.value, responseBody(response))
+    }
+
+    private suspend fun <T> networkRequest(block: suspend () -> T): T =
+        try {
+            block()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: HttpRequestTimeoutException) {
+            throw ZulipApiException.Network(error.message ?: "HTTP request timed out", error)
+        } catch (error: IOException) {
+            throw ZulipApiException.Network(error.message ?: "Network request failed", error)
+        }
+
+    private suspend fun responseBody(response: HttpResponse): String =
+        networkRequest { response.bodyAsText() }
+
+    internal fun parseResponse(statusCode: Int, body: String): String {
+        if (statusCode == 408 || statusCode == 429 || statusCode >= 500) {
+            val error = zulipError(body)
+            throw ZulipApiException.ApiError(
+                statusCode = statusCode,
+                code = error?.code,
+                message = error?.message ?: "HTTP $statusCode",
+            )
+        }
+
+        val root = runCatching { json.parseToJsonElement(body).jsonObject }
+            .getOrElse { throw ZulipApiException.MalformedResponse(body.take(500)) }
+
+        val result = root["result"]?.jsonPrimitive?.content
+        if (statusCode !in 200..299 || result == "error") {
+            val code = root["code"]?.jsonPrimitive?.content
+            val msg = root["msg"]?.jsonPrimitive?.content ?: "HTTP $statusCode"
+            throw ZulipApiException.ApiError(statusCode, code, msg)
+        }
+        return body
+    }
+
+    private fun zulipError(body: String): ZulipError? = runCatching {
+        val root = json.parseToJsonElement(body).jsonObject
+        if (root["result"]?.jsonPrimitive?.content != "error") {
+            null
+        } else {
+            ZulipError(
+                code = root["code"]?.jsonPrimitive?.content,
+                message = root["msg"]?.jsonPrimitive?.content ?: "Malformed Zulip error",
+            )
+        }
+    }.getOrNull()
+
+    fun close() {
+        client.close()
+    }
+
+    private val apiBase: String
+        get() = "${realmUrl.trimEnd('/')}/api/v1"
+
+    companion object {
+        private const val USER_AGENT = "ZulipLightOS/1.0"
+
+        fun normalizeRealmUrl(input: String): String {
+            var url = input.trim()
+            if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                url = "https://$url"
+            }
+            return url.trimEnd('/')
+        }
+
+        fun httpsRealmUrlError(input: String): String? {
+            val trimmed = input.trim()
+            if (trimmed.startsWith("http://", ignoreCase = true)) {
+                return "Server URL must use HTTPS"
+            }
+            return null
+        }
+
+        private fun encode(value: String): String =
+            java.net.URLEncoder.encode(value, Charsets.UTF_8.name())
+    }
+
+    private data class ZulipError(
+        val code: String?,
+        val message: String,
+    )
+}

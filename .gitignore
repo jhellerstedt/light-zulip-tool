@@ -1,4 +1,6 @@
 .gradle
+.worktrees/
+.superpowers/
 build/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
@@ -45,3 +47,11 @@ bin/
 
 ### Clanker ###
 .claude/
+
+### Python (builder/) ###
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+### Signing keys ###
+/signer/keys/
