@@ -112,8 +112,13 @@ private fun Map<String, String?>.toData(): Data {
     return workDataOf(*pairs)
 }
 
-private fun Data.toStringMap(): Map<String, String> =
-    keyValueMap.mapValues { it.toString() }.toMap()
+private fun Data.toStringMap(): Map<String, String> = lightJobInput(keyValueMap)
+
+/** Stored string values. [Map.Entry.toString] is `key=value`, which is not the value. */
+internal fun lightJobInput(values: Map<String, Any?>): Map<String, String> =
+    values.mapNotNull { (key, value) ->
+        (value as? String)?.let { key to it }
+    }.toMap()
 
 object LightWork {
     /**
