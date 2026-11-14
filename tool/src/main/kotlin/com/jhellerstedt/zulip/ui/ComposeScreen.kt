@@ -1,18 +1,26 @@
 package com.jhellerstedt.zulip.ui
 
 import android.Manifest
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.delete
@@ -27,7 +35,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -51,7 +62,7 @@ import com.thelightphone.sdk.rememberKeyboardOptions
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightIcons
-import com.thelightphone.sdk.ui.LightScrollView
+import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTheme
@@ -113,7 +124,10 @@ class ComposeScreen(
         }
         val keyboardOptionsFlow = rememberKeyboardOptions()
         val scope = rememberCoroutineScope()
-        var photos by remember { mutableStateOf<List<LightMedia.Item.Image>?>(null) }
+        var albumOpen by remember { mutableStateOf(false) }
+        var albumLoading by remember { mutableStateOf(false) }
+        var photos by remember { mutableStateOf<List<LightMedia.Item.Image>>(emptyList()) }
+        var attachingIds by remember { mutableStateOf(emptySet<Long>()) }
         val permissionLauncher = rememberPermissionRequestLauncher(Manifest.permission.READ_MEDIA_IMAGES)
         val draftDirectory = remember { File(lightContext.filesDir, "zulip-compose-drafts") }
 
@@ -127,7 +141,44 @@ class ComposeScreen(
                 return
             }
             waitingForPhotoPermission = false
-            photos = lightContext.media.loadImages(limit = 20).items
+            albumOpen = true
+            albumLoading = true
+            photos = lightContext.media.loadImages(limit = 100).items
+            albumLoading = false
+        }
+
+        fun closeAlbum() {
+            albumOpen = false
+        }
+
+        fun togglePhoto(image: LightMedia.Item.Image) {
+            val existing = state.attachments.filter { it.mediaId == image.id }
+            if (existing.isNotEmpty()) {
+                deleteDraftFiles(existing)
+                viewModel.replaceAttachments(state.attachments.filter { it.mediaId != image.id })
+                return
+            }
+            if (image.id in attachingIds) return
+            attachingIds = attachingIds + image.id
+            scope.launch {
+                try {
+                    val bytes = lightContext.media.readItem(image) { input -> input.readBytes() }
+                    if (bytes == null) {
+                        viewModel.reportError("Could not read ${image.name}")
+                        return@launch
+                    }
+                    val draft = writeComposeDraft(
+                        directory = draftDirectory,
+                        displayName = image.name,
+                        bytes = bytes,
+                        sourceIndex = state.attachments.size,
+                        mediaId = image.id,
+                    )
+                    viewModel.replaceAttachments(state.attachments + draft)
+                } finally {
+                    attachingIds = attachingIds - image.id
+                }
+            }
         }
 
         LaunchedEffect(resumeCount) {
@@ -169,6 +220,39 @@ class ComposeScreen(
                         .fillMaxSize()
                         .fillMaxWidth(),
                 ) {
+                    if (albumOpen) {
+                        LightTopBar(
+                            center = LightTopBarCenter.Text("Album"),
+                            modifier = Modifier.padding(bottom = 1f.gridUnitsAsDp()),
+                        )
+                        AlbumPicker(
+                            photos = photos,
+                            loading = albumLoading,
+                            selectedIds = state.attachments.mapNotNull { it.mediaId }.toSet(),
+                            onToggle = ::togglePhoto,
+                            decodeThumbnail = { image ->
+                                val bytes = lightContext.media.readItem(image) { input -> input.readBytes() }
+                                if (bytes == null) null else decodeAlbumThumbnail(bytes)
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                        )
+                        LightBottomBar(
+                            items = listOf(
+                                LightBarButton.LightIcon(
+                                    icon = LightIcons.BACK,
+                                    onClick = ::closeAlbum,
+                                    contentDescription = "Back",
+                                ),
+                                null,
+                                LightBarButton.Text(
+                                    text = "DONE",
+                                    onClick = ::closeAlbum,
+                                ),
+                            ),
+                        )
+                    } else {
                     LightTopBar(
                         center = LightTopBarCenter.Text(state.title),
                         modifier = Modifier.padding(bottom = 1f.gridUnitsAsDp()),
@@ -188,38 +272,12 @@ class ComposeScreen(
                         )
                     }
 
-                    if (photos != null) {
-                        PhotoLibrary(
-                            photos = photos.orEmpty(),
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth(),
-                            onPhotoSelected = { image ->
-                                scope.launch {
-                                    val bytes = lightContext.media.readItem(image) { input -> input.readBytes() }
-                                    if (bytes == null) {
-                                        viewModel.reportError("Could not read ${image.name}")
-                                        return@launch
-                                    }
-                                    val draft = writeComposeDraft(
-                                        directory = draftDirectory,
-                                        displayName = image.name,
-                                        bytes = bytes,
-                                        sourceIndex = state.attachments.size,
-                                    )
-                                    viewModel.replaceAttachments(state.attachments + draft)
-                                    photos = null
-                                }
-                            },
-                        )
-                    } else {
-                        ComposeMessageEditor(
-                            state = textFieldState,
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth(),
-                        )
-                    }
+                    ComposeMessageEditor(
+                        state = textFieldState,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                    )
 
                     if (activeMention != null) {
                         MentionSuggestions(
@@ -254,8 +312,6 @@ class ComposeScreen(
                                 icon = LightIcons.MEDIA,
                                 onClick = if (state.isSending) {
                                     null
-                                } else if (photos != null) {
-                                    { photos = null }
                                 } else {
                                     { scope.launch { showPhotoLibrary() } }
                                 },
@@ -279,6 +335,7 @@ class ComposeScreen(
                             ),
                         ),
                     )
+                    }
                 }
 
                 state.errorMessage?.let { message ->
@@ -293,29 +350,123 @@ class ComposeScreen(
 }
 
 @Composable
-private fun PhotoLibrary(
+private fun AlbumPicker(
     photos: List<LightMedia.Item.Image>,
-    onPhotoSelected: (LightMedia.Item.Image) -> Unit,
+    loading: Boolean,
+    selectedIds: Set<Long>,
+    onToggle: (LightMedia.Item.Image) -> Unit,
+    decodeThumbnail: suspend (LightMedia.Item.Image) -> ImageBitmap?,
     modifier: Modifier = Modifier,
 ) {
-    LightScrollView(modifier = modifier.padding(horizontal = 2f.gridUnitsAsDp())) {
-        if (photos.isEmpty()) {
-            LightText(
-                text = "No photos",
-                variant = LightTextVariant.Copy,
-            )
-        }
-        photos.forEach { photo ->
-            LightText(
-                text = photo.name,
-                variant = LightTextVariant.Copy,
+    if (loading) {
+        LightText(
+            text = "Loading photos…",
+            variant = LightTextVariant.Copy,
+            modifier = modifier.padding(horizontal = 2f.gridUnitsAsDp()),
+        )
+        return
+    }
+    if (photos.isEmpty()) {
+        LightText(
+            text = "No photos",
+            variant = LightTextVariant.Copy,
+            modifier = modifier.padding(horizontal = 2f.gridUnitsAsDp()),
+        )
+        return
+    }
+    val rows = photos.chunked(2)
+    LightLazyScrollView(
+        modifier = modifier,
+        uniformItemHeightGridUnits = 8f,
+    ) {
+        items(rows, key = { row -> row.first().id }) { row ->
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .lightClickable { onPhotoSelected(photo) }
-                    .padding(vertical = 0.5f.gridUnitsAsDp()),
+                    .height(8f.gridUnitsAsDp()),
+            ) {
+                row.forEach { photo ->
+                    AlbumTile(
+                        photo = photo,
+                        selected = photo.id in selectedIds,
+                        onClick = { onToggle(photo) },
+                        decodeThumbnail = decodeThumbnail,
+                    )
+                }
+                if (row.size == 1) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RowScope.AlbumTile(
+    photo: LightMedia.Item.Image,
+    selected: Boolean,
+    onClick: () -> Unit,
+    decodeThumbnail: suspend (LightMedia.Item.Image) -> ImageBitmap?,
+) {
+    var bitmap by remember(photo.id) { mutableStateOf<ImageBitmap?>(null) }
+    var failed by remember(photo.id) { mutableStateOf(false) }
+    LaunchedEffect(photo.id) {
+        val decoded = decodeThumbnail(photo)
+        if (decoded == null) failed = true else bitmap = decoded
+    }
+    val border = if (selected) {
+        Modifier.border(3.dp, LightThemeTokens.colors.content)
+    } else {
+        Modifier
+    }
+    Box(
+        modifier = Modifier
+            .weight(1f)
+            .fillMaxHeight()
+            .padding(0.25f.gridUnitsAsDp())
+            .then(border)
+            .lightClickable(onClick = onClick),
+    ) {
+        val image = bitmap
+        if (image != null) {
+            Image(
+                bitmap = image,
+                contentDescription = photo.name,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+        } else if (failed) {
+            LightText(
+                text = photo.name,
+                variant = LightTextVariant.Detail,
+                modifier = Modifier.padding(0.5f.gridUnitsAsDp()),
+            )
+        }
+        if (selected) {
+            LightText(
+                text = "Selected",
+                variant = LightTextVariant.Detail,
+                modifier = Modifier.padding(0.5f.gridUnitsAsDp()),
             )
         }
     }
+}
+
+private fun decodeAlbumThumbnail(bytes: ByteArray): ImageBitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    val options = BitmapFactory.Options().apply {
+        inSampleSize = albumSampleSize(bounds.outWidth, bounds.outHeight, 480)
+    }
+    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) ?: return null
+    return bitmap.asImageBitmap()
+}
+
+private fun albumSampleSize(width: Int, height: Int, maxEdge: Int): Int {
+    var sample = 1
+    while (width / sample > maxEdge || height / sample > maxEdge) sample *= 2
+    return sample
 }
 
 @Composable

@@ -5,7 +5,7 @@ import com.thelightphone.sdk.LightEntryPoint
 import com.thelightphone.sdk.shared.LightServerData
 import kotlinx.coroutines.flow.StateFlow
 
-const val TOOL_DISPLAY_NAME = "Chat for Zulip (unofficial)"
+const val TOOL_DISPLAY_NAME = "Zulip"
 
 const val UNOFFICIAL_DISCLAIMER =
     "Unofficial client. Not affiliated with Zulip, Kandra Labs, or The Light Phone."

@@ -1,8 +1,8 @@
 [tool]
 id = "com.jhellerstedt.zulip"
-label = "Chat for Zulip (unofficial)"
-versionCode = 3
-versionName = "1.1.1"
+label = "Zulip"
+versionCode = 4
+versionName = "1.1.2"
 permissions = ["android.permission.INTERNET", "android.permission.READ_MEDIA_IMAGES"]
 capabilities = []
 # for the LightOS emulator, use the line below and build with -DlightSdk.allowAltServerPackage=true

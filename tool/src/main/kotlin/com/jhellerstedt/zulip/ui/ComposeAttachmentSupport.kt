@@ -7,6 +7,7 @@ data class ComposeAttachmentDraft(
     val mimeType: String,
     val filePath: String,
     val sourceIndex: Int,
+    val mediaId: Long? = null,
 )
 
 data class UploadedAttachmentLink(
@@ -62,6 +63,7 @@ fun writeComposeDraft(
     displayName: String,
     bytes: ByteArray,
     sourceIndex: Int,
+    mediaId: Long? = null,
 ): ComposeAttachmentDraft {
     directory.mkdirs()
     val safeName = displayName.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "photo.jpg" }
@@ -72,6 +74,7 @@ fun writeComposeDraft(
         mimeType = imageMimeType(displayName),
         filePath = file.absolutePath,
         sourceIndex = sourceIndex,
+        mediaId = mediaId,
     )
 }
 
