@@ -47,6 +47,34 @@ private fun sanitizeAttachmentName(displayName: String): String {
     return displayName.replace("[", "").replace("]", "")
 }
 
+fun imageMimeType(displayName: String): String {
+    return when (displayName.substringAfterLast('.', "").lowercase()) {
+        "png" -> "image/png"
+        "gif" -> "image/gif"
+        "webp" -> "image/webp"
+        "bmp" -> "image/bmp"
+        else -> "image/jpeg"
+    }
+}
+
+fun writeComposeDraft(
+    directory: File,
+    displayName: String,
+    bytes: ByteArray,
+    sourceIndex: Int,
+): ComposeAttachmentDraft {
+    directory.mkdirs()
+    val safeName = displayName.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "photo.jpg" }
+    val file = File(directory, "$sourceIndex-$safeName")
+    file.writeBytes(bytes)
+    return ComposeAttachmentDraft(
+        displayName = displayName.ifBlank { safeName },
+        mimeType = imageMimeType(displayName),
+        filePath = file.absolutePath,
+        sourceIndex = sourceIndex,
+    )
+}
+
 fun deleteDraftFiles(attachments: List<ComposeAttachmentDraft>) {
     attachments.forEach { File(it.filePath).delete() }
 }

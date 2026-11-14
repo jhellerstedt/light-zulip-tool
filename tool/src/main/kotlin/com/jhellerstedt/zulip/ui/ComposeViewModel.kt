@@ -87,9 +87,12 @@ class ComposeViewModel internal constructor(
         }
     }
 
-    /** A future file source calls this and nothing else. */
     fun replaceAttachments(attachments: List<ComposeAttachmentDraft>) {
         _uiState.update { it.copy(attachments = attachments) }
+    }
+
+    fun reportError(message: String) {
+        _uiState.update { it.copy(errorMessage = message) }
     }
 
     fun sendMessage(content: String) {

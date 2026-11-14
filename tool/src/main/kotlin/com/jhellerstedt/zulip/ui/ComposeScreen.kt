@@ -1,5 +1,6 @@
 package com.jhellerstedt.zulip.ui
 
+import android.Manifest
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -20,8 +21,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -37,12 +40,18 @@ import com.thelightphone.lp3Keyboard.ui.layout.EnShared
 import com.thelightphone.lp3Keyboard.ui.viewmodel.EnQwertyLp3KeyboardViewModel
 import com.thelightphone.lp3Keyboard.ui.viewmodel.Lp3KeyboardViewModel
 import com.thelightphone.lp3Keyboard.ui.viewmodel.Lp3RepeatableKeyboardCallback
+import com.thelightphone.sdk.LightMedia
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.checkPermission
+import com.thelightphone.sdk.rememberPermissionRequestLauncher
+import com.thelightphone.sdk.shared.LightServiceMethod
+import com.thelightphone.sdk.shared.asKotlinResult
 import com.thelightphone.sdk.rememberKeyboardOptions
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightIcons
+import com.thelightphone.sdk.ui.LightScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTheme
@@ -58,11 +67,20 @@ import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.keyboard.LightEmbeddedLp3Keyboard
 import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import java.io.File
 
 class ComposeScreen(
     sealedActivity: SealedLightActivity,
     private val narrow: Narrow,
 ) : LightScreen<Unit, ComposeViewModel>(sealedActivity) {
+
+    private var resumeCount by mutableIntStateOf(0)
+    private var waitingForPhotoPermission = false
+
+    override fun willShow() {
+        resumeCount++
+    }
 
     override val viewModelClass: Class<ComposeViewModel>
         get() = ComposeViewModel::class.java
@@ -94,6 +112,27 @@ class ComposeScreen(
             }.orEmpty()
         }
         val keyboardOptionsFlow = rememberKeyboardOptions()
+        val scope = rememberCoroutineScope()
+        var photos by remember { mutableStateOf<List<LightMedia.Item.Image>?>(null) }
+        val permissionLauncher = rememberPermissionRequestLauncher(Manifest.permission.READ_MEDIA_IMAGES)
+        val draftDirectory = remember { File(lightContext.filesDir, "zulip-compose-drafts") }
+
+        suspend fun showPhotoLibrary() {
+            val granted = checkPermission(Manifest.permission.READ_MEDIA_IMAGES).asKotlinResult
+                .map { it.permissionResult == LightServiceMethod.GetPermission.Result.Granted }
+                .getOrDefault(false)
+            if (!granted) {
+                waitingForPhotoPermission = true
+                permissionLauncher?.launch()
+                return
+            }
+            waitingForPhotoPermission = false
+            photos = lightContext.media.loadImages(limit = 20).items
+        }
+
+        LaunchedEffect(resumeCount) {
+            if (waitingForPhotoPermission) showPhotoLibrary()
+        }
 
         LaunchedEffect(state.sent) {
             if (state.sent) {
@@ -149,12 +188,38 @@ class ComposeScreen(
                         )
                     }
 
-                    ComposeMessageEditor(
-                        state = textFieldState,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
-                    )
+                    if (photos != null) {
+                        PhotoLibrary(
+                            photos = photos.orEmpty(),
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                            onPhotoSelected = { image ->
+                                scope.launch {
+                                    val bytes = lightContext.media.readItem(image) { input -> input.readBytes() }
+                                    if (bytes == null) {
+                                        viewModel.reportError("Could not read ${image.name}")
+                                        return@launch
+                                    }
+                                    val draft = writeComposeDraft(
+                                        directory = draftDirectory,
+                                        displayName = image.name,
+                                        bytes = bytes,
+                                        sourceIndex = state.attachments.size,
+                                    )
+                                    viewModel.replaceAttachments(state.attachments + draft)
+                                    photos = null
+                                }
+                            },
+                        )
+                    } else {
+                        ComposeMessageEditor(
+                            state = textFieldState,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                        )
+                    }
 
                     if (activeMention != null) {
                         MentionSuggestions(
@@ -185,7 +250,17 @@ class ComposeScreen(
                                 onClick = if (state.isSending) null else { { goBack() } },
                                 contentDescription = "Back",
                             ),
-                            null,
+                            LightBarButton.LightIcon(
+                                icon = LightIcons.MEDIA,
+                                onClick = if (state.isSending) {
+                                    null
+                                } else if (photos != null) {
+                                    { photos = null }
+                                } else {
+                                    { scope.launch { showPhotoLibrary() } }
+                                },
+                                contentDescription = "Add photo",
+                            ),
                             LightBarButton.Text(
                                 text = if (state.isSending) "QUEUEING" else "SEND",
                                 onClick = if (state.isSending) {
@@ -213,6 +288,32 @@ class ComposeScreen(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun PhotoLibrary(
+    photos: List<LightMedia.Item.Image>,
+    onPhotoSelected: (LightMedia.Item.Image) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    LightScrollView(modifier = modifier.padding(horizontal = 2f.gridUnitsAsDp())) {
+        if (photos.isEmpty()) {
+            LightText(
+                text = "No photos",
+                variant = LightTextVariant.Copy,
+            )
+        }
+        photos.forEach { photo ->
+            LightText(
+                text = photo.name,
+                variant = LightTextVariant.Copy,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .lightClickable { onPhotoSelected(photo) }
+                    .padding(vertical = 0.5f.gridUnitsAsDp()),
+            )
         }
     }
 }
@@ -331,7 +432,7 @@ private fun ComposeKeyboard(
 
 @Composable
 private fun composeInputTextStyle(): TextStyle {
-    val base = LightThemeTokens.typography.detail
+    val base = LightThemeTokens.typography.copy
     return base.copy(
         color = LightThemeTokens.colors.content,
         textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,

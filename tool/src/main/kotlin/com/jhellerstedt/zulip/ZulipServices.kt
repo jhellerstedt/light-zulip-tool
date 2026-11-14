@@ -126,6 +126,12 @@ object ZulipServices {
         }
     }
 
+    fun clientForActiveAccount(context: SealedLightContext): ZulipClient? {
+        val account = globalStore(context).activeStore.value?.account ?: return null
+        val apiKey = accountRepository(context).getApiKey(account.id) ?: return null
+        return ZulipClient(account.realmUrl, account.email, apiKey)
+    }
+
     fun globalStore(context: SealedLightContext): GlobalStore {
         return globalStore ?: synchronized(this) {
             globalStore ?: GlobalStore(

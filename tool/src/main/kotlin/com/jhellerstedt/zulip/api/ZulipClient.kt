@@ -15,6 +15,7 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
@@ -29,7 +30,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.io.IOException
 
 class ZulipClient(
-    private val realmUrl: String,
+    val realmUrl: String,
     private val email: String? = null,
     private val apiKey: String? = null,
 ) {
@@ -140,6 +141,25 @@ class ZulipClient(
             }
         }
         return parseResponse(response.status.value, responseBody(response))
+    }
+
+    suspend fun getBytes(absoluteUrl: String): ByteArray? {
+        val response = try {
+            networkRequest {
+                client.get(absoluteUrl) {
+                    if (isAuthenticated) {
+                        requireNotNull(email)
+                        requireNotNull(apiKey)
+                        basicAuth(email, apiKey)
+                    }
+                    header(HttpHeaders.UserAgent, USER_AGENT)
+                }
+            }
+        } catch (_: ZulipApiException.Network) {
+            return null
+        }
+        if (response.status.value !in 200..299) return null
+        return networkRequest { response.bodyAsBytes() }
     }
 
     private suspend fun <T> networkRequest(block: suspend () -> T): T =

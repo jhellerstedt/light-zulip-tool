@@ -1,17 +1,24 @@
 package com.jhellerstedt.zulip.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.ui.LightBarButton
@@ -29,8 +36,14 @@ import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.jhellerstedt.zulip.ZulipServices
 import com.jhellerstedt.zulip.store.ConnectionState
 import com.jhellerstedt.zulip.store.Narrow
+import com.jhellerstedt.zulip.util.MessagePart
 import com.jhellerstedt.zulip.util.formatTimestamp
-import com.jhellerstedt.zulip.util.presentMessageContent
+import com.jhellerstedt.zulip.util.messageParts
+import com.jhellerstedt.zulip.util.resolveRealmContentUrl
+import android.graphics.BitmapFactory
+import androidx.compose.ui.graphics.asImageBitmap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MessageListScreen(
     sealedActivity: SealedLightActivity,
@@ -102,10 +115,22 @@ class MessageListScreen(
                                     variant = LightTextVariant.Detail,
                                     lighten = true,
                                 )
-                                LightText(
-                                    text = presentMessageContent(message.content),
-                                    variant = LightTextVariant.Copy,
-                                )
+                                messageParts(message.content).forEach { part ->
+                                    when (part) {
+                                        is MessagePart.Text -> LightText(
+                                            text = part.text,
+                                            variant = LightTextVariant.Copy,
+                                        )
+                                        is MessagePart.FileLink -> LightText(
+                                            text = "File: ${part.name}",
+                                            variant = LightTextVariant.Copy,
+                                        )
+                                        is MessagePart.Photo -> ZulipPhoto(
+                                            name = part.name,
+                                            url = part.url,
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -135,4 +160,58 @@ class MessageListScreen(
             }
         }
     }
+
+    @Composable
+    private fun ZulipPhoto(name: String, url: String) {
+        var bitmap by remember(url) { mutableStateOf<ImageBitmap?>(null) }
+        var failed by remember(url) { mutableStateOf(false) }
+        LaunchedEffect(url) {
+            val loaded = withContext(Dispatchers.IO) {
+                runCatching {
+                    val client = ZulipServices.clientForActiveAccount(lightContext) ?: return@runCatching null
+                    try {
+                        val bytes = client.getBytes(resolveRealmContentUrl(client.realmUrl, url))
+                            ?: return@runCatching null
+                        decodeMessageImage(bytes)
+                    } finally {
+                        client.close()
+                    }
+                }.getOrNull()
+            }
+            if (loaded == null) failed = true else bitmap = loaded
+        }
+        val image = bitmap
+        if (image != null) {
+            Image(
+                bitmap = image,
+                contentDescription = name,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8f.gridUnitsAsDp()),
+                contentScale = ContentScale.Fit,
+            )
+        } else {
+            LightText(
+                text = if (failed) "Photo: $name" else "Loading photo…",
+                variant = LightTextVariant.Detail,
+            )
+        }
+    }
+}
+
+private fun decodeMessageImage(bytes: ByteArray): ImageBitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    val options = BitmapFactory.Options().apply {
+        inSampleSize = imageSampleSize(bounds.outWidth, bounds.outHeight, 1080)
+    }
+    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) ?: return null
+    return bitmap.asImageBitmap()
+}
+
+private fun imageSampleSize(width: Int, height: Int, maxEdge: Int): Int {
+    var sample = 1
+    while (width / sample > maxEdge || height / sample > maxEdge) sample *= 2
+    return sample
 }
