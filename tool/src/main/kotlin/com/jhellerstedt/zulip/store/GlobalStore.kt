@@ -9,6 +9,7 @@ import com.jhellerstedt.zulip.data.StoredZulipAccount
 import com.jhellerstedt.zulip.data.ZulipAccountStore
 import com.jhellerstedt.zulip.data.ZulipCacheRepository
 import com.jhellerstedt.zulip.data.ZulipOutboxRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -73,6 +74,7 @@ class GlobalStore(
     ),
     private val outboxRepository: ZulipOutboxRepository? = null,
     private val outboxScheduler: OutboxScheduler? = null,
+    private val deliverOutbox: (suspend (Long) -> Unit)? = null,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) {
     private val poller = EventPoller(scope, gateway, coordinator)
@@ -120,7 +122,7 @@ class GlobalStore(
             ?: return Result.failure(IllegalStateException("Zulip outbox repository is not registered"))
         val result = repository.enqueue(accountId, narrow, content, attachments)
         return result.map { localId ->
-            tryScheduleOutbox(accountId)
+            flushOutbox(accountId)
             localId
         }
     }
@@ -130,7 +132,7 @@ class GlobalStore(
 
     suspend fun retryOutboxMessage(messageId: String, accountId: Long) {
         outboxRepository?.retry(messageId)
-        tryScheduleOutbox(accountId)
+        flushOutbox(accountId)
     }
 
     suspend fun discardOutboxMessage(messageId: String) {
@@ -232,7 +234,18 @@ class GlobalStore(
     private suspend fun scheduleOutboxWorkerIfPending(accountId: Long) {
         val repository = outboxRepository ?: return
         if (repository.observeSummary(accountId).first().pendingCount > 0) {
-            tryScheduleOutbox(accountId)
+            flushOutbox(accountId)
+        }
+    }
+
+    private suspend fun flushOutbox(accountId: Long) {
+        tryScheduleOutbox(accountId)
+        try {
+            deliverOutbox?.invoke(accountId)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // The row stays queued. The scheduled worker can try again.
         }
     }
 

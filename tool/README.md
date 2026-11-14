@@ -12,7 +12,7 @@ The API key stays on the phone, encrypted in the Android keystore. Recent messag
 
 Compose has a photo button. It asks for `READ_MEDIA_IMAGES`, lists recent album photos, and copies the chosen file into a `ComposeAttachmentDraft`. Send uploads that file and posts it as a Zulip link.
 
-A received photo is shown in the conversation. Other attachments still show as `File: name`. If the image cannot be downloaded, the row falls back to `Photo: name`.
+A received photo is shown in the conversation. Tap it to open the picture full screen. Other attachments still show as `File: name`. If the image cannot be downloaded, the row falls back to `Photo: name`.
 
 ```bash
 ./gradlew :tool:installDebug

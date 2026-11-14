@@ -17,6 +17,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import com.thelightphone.sdk.LightScreen
@@ -33,6 +34,7 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
+import com.thelightphone.sdk.ui.lightClickable
 import com.jhellerstedt.zulip.ZulipServices
 import com.jhellerstedt.zulip.store.ConnectionState
 import com.jhellerstedt.zulip.store.Narrow
@@ -61,6 +63,7 @@ class MessageListScreen(
         val themeColors by LightThemeController.colors.collectAsState()
         val state by viewModel.uiState.collectAsState()
         val scrollState = rememberScrollState()
+        var expandedPhoto by remember { mutableStateOf<ImageBitmap?>(null) }
 
         LaunchedEffect(narrow) {
             viewModel.loadMessages()
@@ -128,6 +131,7 @@ class MessageListScreen(
                                         is MessagePart.Photo -> ZulipPhoto(
                                             name = part.name,
                                             url = part.url,
+                                            onOpen = { expandedPhoto = it },
                                         )
                                     }
                                 }
@@ -157,12 +161,42 @@ class MessageListScreen(
                         onClose = viewModel::dismissError,
                     )
                 }
+
+                expandedPhoto?.let { bitmap ->
+                    ExpandedPhoto(bitmap = bitmap, onClose = { expandedPhoto = null })
+                }
             }
         }
     }
 
     @Composable
-    private fun ZulipPhoto(name: String, url: String) {
+    private fun ExpandedPhoto(bitmap: ImageBitmap, onClose: () -> Unit) {
+        Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+            Image(
+                bitmap = bitmap,
+                contentDescription = "Photo",
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .lightClickable(onClick = onClose),
+                contentScale = ContentScale.Fit,
+            )
+            LightBottomBar(
+                items = listOf(
+                    LightBarButton.LightIcon(
+                        icon = LightIcons.BACK,
+                        onClick = onClose,
+                        contentDescription = "Back",
+                    ),
+                    null,
+                    null,
+                ),
+            )
+        }
+    }
+
+    @Composable
+    private fun ZulipPhoto(name: String, url: String, onOpen: (ImageBitmap) -> Unit) {
         var bitmap by remember(url) { mutableStateOf<ImageBitmap?>(null) }
         var failed by remember(url) { mutableStateOf(false) }
         LaunchedEffect(url) {
@@ -187,7 +221,8 @@ class MessageListScreen(
                 contentDescription = name,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(8f.gridUnitsAsDp()),
+                    .height(8f.gridUnitsAsDp())
+                    .lightClickable { onOpen(image) },
                 contentScale = ContentScale.Fit,
             )
         } else {

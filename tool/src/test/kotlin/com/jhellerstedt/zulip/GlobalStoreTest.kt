@@ -200,6 +200,35 @@ class GlobalStoreTest {
     }
 
     @Test
+    fun enqueueMessageDeliversTheQueuedMessageBeforeReturning() = runTest {
+        val accountId = 1L
+        val callLog = mutableListOf<String>()
+        val accountStore = FakeAccountStore(listOf(fixtureAccount(id = accountId, email = "a@example.com")))
+        val cache = ZulipCacheRepository(FakeGlobalCacheDao(), nowMillis = { now })
+        val outboxRepository = ZulipOutboxRepository(RecordingOutboxDao(callLog), NoOpOutboxFileStore())
+        val outboxScheduler = LoggingOutboxScheduler(callLog, enqueueResult = true)
+        val globalStore = GlobalStore(
+            accountRepository = accountStore,
+            cacheRepository = cache,
+            gateway = FakeGlobalGateway(),
+            outboxRepository = outboxRepository,
+            outboxScheduler = outboxScheduler,
+            deliverOutbox = { id -> callLog += "outbox.deliver:$id" },
+            scope = backgroundScope,
+        )
+
+        val result = globalStore.enqueueMessage(
+            accountId = accountId,
+            narrow = Narrow.Channel(10),
+            content = "hello",
+            attachments = emptyList(),
+        )
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf("outbox.enqueue", "scheduler.enqueue", "outbox.deliver:$accountId"), callLog)
+    }
+
+    @Test
     fun enqueueMessageSucceedsWhenSchedulerRejectsWork() = runTest {
         val accountId = 1L
         val callLog = mutableListOf<String>()

@@ -8,6 +8,8 @@ import com.jhellerstedt.zulip.data.ZulipOutboxRepository
 import com.jhellerstedt.zulip.ui.UploadedAttachmentLink
 import com.jhellerstedt.zulip.ui.buildComposeMessageBody
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 
 enum class OutboxFailureKind {
@@ -37,7 +39,13 @@ class ZulipOutboxProcessor(
     private val client: ZulipClient? = null,
     private val clientForAccount: ((Long) -> ZulipClient)? = null,
 ) {
-    suspend fun process(accountId: Long): OutboxRunResult {
+    private val runLock = Mutex()
+
+    suspend fun process(accountId: Long): OutboxRunResult = runLock.withLock {
+        processLocked(accountId)
+    }
+
+    private suspend fun processLocked(accountId: Long): OutboxRunResult {
         val accountClient = client ?: requireNotNull(clientForAccount) {
             "An outbox processor requires a client or client provider"
         }.invoke(accountId)

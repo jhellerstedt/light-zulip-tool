@@ -140,6 +140,9 @@ object ZulipServices {
                 coordinator = syncCoordinator(context),
                 outboxRepository = outboxRepository(context),
                 outboxScheduler = outboxScheduler(context),
+                deliverOutbox = { accountId ->
+                    outboxProcessor(context).process(accountId)
+                },
             ).also { globalStore = it }
         }
     }
