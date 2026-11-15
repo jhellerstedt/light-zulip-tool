@@ -23,6 +23,7 @@ on:
       - gradle/libs.versions.toml
       - build.gradle.kts
       - settings.gradle.kts
+      - .github/workflows/release.yml
   workflow_dispatch:
     inputs:
       bump:
@@ -45,6 +46,9 @@ concurrency:
 jobs:
   tag:
     name: Tag
+    # Publishes the Light SDK. Forks do not have the release app credentials,
+    # and the Tag step fails closed without them.
+    if: github.repository == 'lightphone/light-sdk'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
