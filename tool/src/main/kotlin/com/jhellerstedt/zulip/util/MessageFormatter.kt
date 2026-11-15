@@ -15,7 +15,7 @@ fun stripHtml(html: String): String {
 private val markdownLink = Regex("""\[([^\[\]]*)]\(([^)\s]+)\)""")
 private val imageSuffix = Regex("""\.(?:png|jpe?g|gif|webp|bmp)(?:$|\?)""", RegexOption.IGNORE_CASE)
 private val htmlAnchorOrImage = Regex(
-    """<img\b([^>]*)/?>|<a\b([^>]*)>(.*?)</a>""",
+    """<div\b[^>]*\bmessage_inline_image\b[^>]*>.*?</div>|<img\b([^>]*)/?>|<a\b([^>]*)>(.*?)</a>""",
     setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
 )
 private val htmlAttribute = Regex("""\b([A-Za-z_:][\w:.-]*)\s*=\s*["']([^"']*)["']""")
@@ -63,6 +63,10 @@ private fun markdownMessageParts(content: String): List<MessagePart> {
 }
 
 private fun htmlMessageParts(content: String): List<MessagePart> {
+    val previewHrefs = htmlAnchorOrImage.findAll(content).mapNotNull { match ->
+        if (!match.value.startsWith("<div", ignoreCase = true)) return@mapNotNull null
+        attribute(match.value, "href")?.substringBefore('?')
+    }.toSet()
     val parts = mutableListOf<MessagePart>()
     var cursor = 0
     for (match in htmlAnchorOrImage.findAll(content)) {
@@ -70,18 +74,36 @@ private fun htmlMessageParts(content: String): List<MessagePart> {
         val imageAttrs = match.groupValues[1]
         val anchorAttrs = match.groupValues[2]
         val anchorInner = match.groupValues[3]
-        if (match.value.startsWith("<img", ignoreCase = true)) {
-            attribute(imageAttrs, "src")?.let { src ->
-                parts += linkPart(attribute(imageAttrs, "alt") ?: fileName(src), src)
+        when {
+            match.value.startsWith("<div", ignoreCase = true) -> {
+                val href = attribute(match.value, "href")
+                val imageSrc = attribute(match.value, "src")
+                    ?.takeUnless { it.endsWith("loader-black.svg") }
+                val url = href?.takeIf { it.isNotBlank() } ?: imageSrc
+                if (url != null) {
+                    val name = attribute(match.value, "title")
+                        ?: attribute(match.value, "alt")
+                        ?: fileName(url)
+                    parts += linkPart(name, url)
+                }
             }
-        } else {
-            val href = attribute(anchorAttrs, "href")
-            val nestedSrc = attribute(anchorInner, "src")
-            val url = nestedSrc ?: href
-            if (url != null) {
-                val name = attribute(anchorInner, "alt")
-                    ?: stripHtml(anchorInner).ifBlank { fileName(url) }
-                parts += linkPart(name, url)
+            match.value.startsWith("<img", ignoreCase = true) -> {
+                attribute(imageAttrs, "src")?.let { src ->
+                    parts += linkPart(attribute(imageAttrs, "alt") ?: fileName(src), src)
+                }
+            }
+            else -> {
+                val href = attribute(anchorAttrs, "href")
+                val alreadyPreviewed = href != null && href.substringBefore('?') in previewHrefs
+                if (!alreadyPreviewed) {
+                    val nestedSrc = attribute(anchorInner, "src")
+                    val url = nestedSrc ?: href
+                    if (url != null) {
+                        val name = attribute(anchorInner, "alt")
+                            ?: stripHtml(anchorInner).ifBlank { fileName(url) }
+                        parts += linkPart(name, url)
+                    }
+                }
             }
         }
         cursor = match.range.last + 1

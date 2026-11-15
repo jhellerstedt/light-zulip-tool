@@ -67,6 +67,23 @@ class MessageFormatterTest {
     }
 
     @Test
+    fun messagePartsShowTheUploadOnceWhenZulipAlsoKeepsTheFilenameLink() {
+        val html = """
+            <p>Hello</p>
+            <p><a href="/user_uploads/2/ab/pic.jpg">pic.jpg</a></p>
+            <div class="message_inline_image"><a href="/user_uploads/2/ab/pic.jpg" title="pic.jpg"><img class="image-loading-placeholder" src="/user_uploads/thumbnail/2/ab/pic.jpg/840x560.webp"></a></div>
+        """.trimIndent()
+
+        assertEquals(
+            listOf(
+                MessagePart.Text("Hello"),
+                MessagePart.Photo("pic.jpg", "/user_uploads/2/ab/pic.jpg"),
+            ),
+            messageParts(html),
+        )
+    }
+
+    @Test
     fun resolveRealmContentUrlKeepsAbsoluteAndPrefixesRelative() {
         assertEquals(
             "https://chat.example.com/user_uploads/2/ab/pic.png",
