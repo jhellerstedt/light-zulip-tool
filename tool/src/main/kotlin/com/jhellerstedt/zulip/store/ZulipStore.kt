@@ -56,13 +56,18 @@ class ZulipStore(
     private val users = mutableMapOf<Int, ZulipUser>()
     private val messagesByNarrow = mutableMapOf<String, MutableList<ZulipMessage>>()
     private val unreadByNarrow = mutableMapOf<String, Int>()
+    private val unreadIdsByNarrow = mutableMapOf<String, MutableSet<Int>>()
     private val unreadLatestByStream = mutableMapOf<Int, Int>()
+    private val streamActivity = mutableMapOf<Int, Int>()
 
     private val _inbox = MutableStateFlow<List<InboxConversation>>(emptyList())
     val inbox: StateFlow<List<InboxConversation>> = _inbox.asStateFlow()
 
     private val _streamsList = MutableStateFlow<List<ZulipStream>>(emptyList())
     val streamsList: StateFlow<List<ZulipStream>> = _streamsList.asStateFlow()
+
+    private val _unreadCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val unreadCounts: StateFlow<Map<String, Int>> = _unreadCounts.asStateFlow()
 
     private val _recentDirectMessages = MutableStateFlow<List<DirectMessageConversation>>(emptyList())
     val recentDirectMessages: StateFlow<List<DirectMessageConversation>> = _recentDirectMessages.asStateFlow()
@@ -93,11 +98,14 @@ class ZulipStore(
             messagesByNarrow[narrow.cacheKey()] = cachedMessages.sortedBy { it.id }.toMutableList()
         }
         unreadByNarrow.clear()
+        unreadIdsByNarrow.clear()
         unreadLatestByStream.clear()
+        streamActivity.clear()
         snapshot.conversations.forEach { conversation ->
             if (conversation.unreadCount > 0) {
                 unreadByNarrow[conversation.narrowKey] = conversation.unreadCount
             }
+            rememberStreamActivity(conversation.narrowKey, conversation.lastMessageId)
         }
         // Union DM conversation rows (which mainly cover currently-unread DMs, since
         // toInboxConversations() only emits unread narrows) with DM narrows that only
@@ -117,6 +125,7 @@ class ZulipStore(
             .sortedByDescending { it.maxMessageId }
         publishSelectableUsers()
         publishStreams()
+        publishUnread()
         rebuildInbox()
     }
 
@@ -172,9 +181,29 @@ class ZulipStore(
         syncRecentDirectMessages(response.recentPrivateConversations)
         response.messages.forEach { addMessage(it) }
         rebuildUnreadFromSnapshot(response.unreadMsgs)
+        response.messages.forEach { message ->
+            rememberStreamActivity(message)
+        }
         publishSelectableUsers()
         publishStreams()
+        publishUnread()
         rebuildInbox()
+    }
+
+    /**
+     * Newest message id per stream, from a recent-message window that is not itself unread state.
+     * [publishStreams] uses this so a read stream still sorts above quieter ones.
+     */
+    fun recordStreamActivity(messages: List<ZulipMessage>) {
+        messages.forEach { rememberStreamActivity(it) }
+        publishStreams()
+    }
+
+    fun noteStreamActivity(streamId: Int, messageId: Int) {
+        if (messageId > (streamActivity[streamId] ?: 0)) {
+            streamActivity[streamId] = messageId
+            publishStreams()
+        }
     }
 
     fun handleEvent(event: com.jhellerstedt.zulip.api.models.ZulipEvent) {
@@ -194,6 +223,7 @@ class ZulipStore(
                     "remove" -> event.subscriptions?.forEach { stream ->
                         streams.remove(stream.streamId)
                         unreadLatestByStream.remove(stream.streamId)
+                        streamActivity.remove(stream.streamId)
                     }
                 }
                 publishStreams()
@@ -213,6 +243,7 @@ class ZulipStore(
         if (event.type == "message") {
             publishStreams()
         }
+        publishUnread()
         rebuildInbox()
     }
 
@@ -226,7 +257,9 @@ class ZulipStore(
     }
 
     suspend fun loadTopics(streamId: Int): Result<List<ZulipTopic>> = runCatching {
-        getStreamTopics(client, streamId).topics.sortedByDescending { it.maxId }
+        getStreamTopics(client, streamId).topics.byLatestActivity().also { topics ->
+            noteStreamActivity(streamId, topics.maxOfOrNull { it.maxId } ?: 0)
+        }
     }
 
     suspend fun send(
@@ -258,16 +291,32 @@ class ZulipStore(
 
     suspend fun markNarrowRead(narrow: Narrow) {
         val key = narrow.cacheKey()
-        val unreadIds = messagesByNarrow[key]
-            ?.filter { !it.flags.contains("read") }
-            ?.map { it.id }
-            .orEmpty()
+        val unreadIds = (
+            unreadIdsByNarrow[key].orEmpty() +
+                messagesByNarrow[key].orEmpty()
+                    .filter { !it.flags.contains("read") }
+                    .map { it.id }
+            ).distinct()
         if (unreadIds.isNotEmpty()) {
             runCatching { markMessagesRead(client, unreadIds) }
-            unreadIds.forEach { markMessageReadLocally(it) }
-            unreadByNarrow[key] = 0
-            rebuildInbox()
         }
+        clearUnreadLocally(narrow)
+    }
+
+    /** Drops the asterisk for this narrow once its messages are on screen. */
+    internal fun clearUnreadLocally(narrow: Narrow) {
+        val key = narrow.cacheKey()
+        messagesByNarrow[key]?.let { messages ->
+            messages.forEachIndexed { index, message ->
+                if (!message.flags.contains("read")) {
+                    messages[index] = message.copy(flags = message.flags + "read")
+                }
+            }
+        }
+        unreadIdsByNarrow.remove(key)
+        unreadByNarrow.remove(key)
+        publishUnread()
+        rebuildInbox()
     }
 
     fun getMessagesFor(narrow: Narrow): List<ZulipMessage> =
@@ -358,8 +407,12 @@ class ZulipStore(
             list.add(message)
             list.sortBy { it.id }
         }
+        rememberStreamActivity(message)
         if (!message.flags.contains("read")) {
-            unreadByNarrow[key] = (unreadByNarrow[key] ?: 0) + 1
+            val ids = unreadIdsByNarrow.getOrPut(key) { mutableSetOf() }
+            if (ids.add(message.id)) {
+                unreadByNarrow[key] = (unreadByNarrow[key] ?: 0) + 1
+            }
         }
     }
 
@@ -370,7 +423,14 @@ class ZulipStore(
                 val message = messages[index]
                 if (!message.flags.contains("read")) {
                     messages[index] = message.copy(flags = message.flags + "read")
-                    unreadByNarrow[key] = maxOf(0, (unreadByNarrow[key] ?: 0) - 1)
+                    unreadIdsByNarrow[key]?.remove(messageId)
+                    val remaining = maxOf(0, (unreadByNarrow[key] ?: 0) - 1)
+                    if (remaining == 0) {
+                        unreadByNarrow.remove(key)
+                        unreadIdsByNarrow.remove(key)
+                    } else {
+                        unreadByNarrow[key] = remaining
+                    }
                 }
             }
         }
@@ -378,6 +438,7 @@ class ZulipStore(
 
     private fun rebuildUnreadFromSnapshot(unreadMsgs: com.jhellerstedt.zulip.api.models.UnreadMsgs?) {
         unreadByNarrow.clear()
+        unreadIdsByNarrow.clear()
         unreadLatestByStream.clear()
         unreadMsgs?.streams?.forEach { unreadStream ->
             val narrow = if (unreadStream.topic.isBlank()) {
@@ -385,16 +446,36 @@ class ZulipStore(
             } else {
                 Narrow.Topic(unreadStream.streamId, unreadStream.topic)
             }
-            unreadByNarrow[narrow.cacheKey()] = unreadStream.unreadIds.size
+            val key = narrow.cacheKey()
+            rememberUnread(key, unreadStream.unreadIds)
             val latestUnread = unreadStream.unreadIds.maxOrNull() ?: 0
             if (latestUnread > (unreadLatestByStream[unreadStream.streamId] ?: 0)) {
                 unreadLatestByStream[unreadStream.streamId] = latestUnread
             }
+            rememberStreamActivity(key, latestUnread)
         }
         unreadMsgs?.pms?.forEach { pm ->
-            val key = Narrow.Dm(listOf(pm.senderId)).cacheKey()
-            unreadByNarrow[key] = pm.unreadIds.size
+            rememberUnread(Narrow.Dm(listOf(pm.senderId)).cacheKey(), pm.unreadIds)
         }
+        unreadMsgs?.huddles?.forEach { huddle ->
+            val ids = huddle.userIdsString.split(",")
+                .mapNotNull { it.trim().toIntOrNull() }
+                .filter { it != account.userId }
+                .distinct()
+                .sorted()
+            if (ids.isEmpty()) return@forEach
+            rememberUnread(Narrow.Dm(ids).cacheKey(), huddle.unreadIds)
+        }
+    }
+
+    private fun rememberUnread(key: String, messageIds: List<Int>) {
+        if (messageIds.isEmpty()) return
+        unreadByNarrow[key] = messageIds.size
+        unreadIdsByNarrow[key] = messageIds.toMutableSet()
+    }
+
+    private fun publishUnread() {
+        _unreadCounts.value = unreadByNarrow.filterValues { it > 0 }
     }
 
     private fun rebuildInbox() {
@@ -442,6 +523,7 @@ class ZulipStore(
                 latestByStream[streamId] = messageId
             }
         }
+        streamActivity.forEach { (streamId, messageId) -> note(streamId, messageId) }
         unreadLatestByStream.forEach { (streamId, messageId) -> note(streamId, messageId) }
         messagesByNarrow.forEach { (key, messages) ->
             val streamId = when (val narrow = narrowFromCacheKey(key)) {
@@ -455,6 +537,27 @@ class ZulipStore(
             compareByDescending<ZulipStream> { latestByStream[it.streamId] ?: 0 }
                 .thenBy { it.name.lowercase() },
         )
+    }
+
+    private fun rememberStreamActivity(message: ZulipMessage) {
+        if (message.type != "stream") return
+        val streamId = message.streamId ?: return
+        rememberStreamActivity(streamId, message.id)
+    }
+
+    private fun rememberStreamActivity(narrowKey: String, messageId: Int) {
+        val streamId = when (val narrow = narrowFromCacheKey(narrowKey)) {
+            is Narrow.Topic -> narrow.streamId
+            is Narrow.Channel -> narrow.streamId
+            else -> return
+        }
+        rememberStreamActivity(streamId, messageId)
+    }
+
+    private fun rememberStreamActivity(streamId: Int, messageId: Int) {
+        if (messageId > (streamActivity[streamId] ?: 0)) {
+            streamActivity[streamId] = messageId
+        }
     }
 
     private fun narrowForMessage(message: ZulipMessage): Narrow? {

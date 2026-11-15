@@ -112,6 +112,14 @@ class GlobalStore(
         return coordinator.refreshTopics(store, streamId)
     }
 
+    suspend fun markNarrowRead(narrow: Narrow) {
+        val store = activeStore.value ?: return
+        store.markNarrowRead(narrow)
+        withContext(Dispatchers.IO) {
+            cacheRepository.clearConversationUnread(store.account.id, narrow.cacheKey())
+        }
+    }
+
     suspend fun enqueueMessage(
         accountId: Long,
         narrow: Narrow,
@@ -289,11 +297,13 @@ class GlobalStore(
                         if (_activeStore.value === store) {
                             startEventSyncIfNeeded(store)
                         }
+                        scope.launch { coordinator.indexStreamActivity(store) }
                     }
             }
         } else {
             coordinator.register(store).getOrThrow()
             startEventSyncIfNeeded(store)
+            scope.launch { coordinator.indexStreamActivity(store) }
         }
         return store
     }

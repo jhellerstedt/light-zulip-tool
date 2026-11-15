@@ -6,6 +6,8 @@ import com.jhellerstedt.zulip.TOOL_DISPLAY_NAME
 import com.jhellerstedt.zulip.data.PendingMessageEntity
 import com.jhellerstedt.zulip.store.ConnectionState
 import com.jhellerstedt.zulip.store.GlobalStore
+import com.jhellerstedt.zulip.store.hasDirectUnread
+import com.jhellerstedt.zulip.store.hasStreamUnread
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,7 +21,9 @@ import kotlinx.coroutines.launch
 data class ZulipHomeUiState(
     val realmTitle: String = TOOL_DISPLAY_NAME,
     val streamCount: Int = 0,
+    val streamsHaveUnread: Boolean = false,
     val directMessageCount: Int = 0,
+    val directMessagesHaveUnread: Boolean = false,
     val isLoading: Boolean = false,
     val connectionState: ConnectionState = ConnectionState.REFRESHING,
     val pendingMessageCount: Int = 0,
@@ -80,6 +84,16 @@ class ZulipHomeViewModel(
                         store.error.collect { error ->
                             if (error != null) {
                                 _uiState.update { it.copy(errorMessage = error) }
+                            }
+                        }
+                    }
+                    launch {
+                        store.unreadCounts.collect { counts ->
+                            _uiState.update {
+                                it.copy(
+                                    streamsHaveUnread = counts.hasStreamUnread(),
+                                    directMessagesHaveUnread = counts.hasDirectUnread(),
+                                )
                             }
                         }
                     }

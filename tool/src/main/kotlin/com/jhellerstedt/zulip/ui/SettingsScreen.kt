@@ -9,9 +9,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.rememberPermissionRequestLauncher
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightIcons
@@ -26,6 +30,7 @@ import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 import com.jhellerstedt.zulip.ZulipServices
+import kotlinx.coroutines.delay
 
 class SettingsScreen(sealedActivity: SealedLightActivity) :
     LightScreen<Unit, SettingsViewModel>(sealedActivity) {
@@ -34,12 +39,26 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
         get() = SettingsViewModel::class.java
 
     override fun createViewModel(): SettingsViewModel =
-        SettingsViewModel(ZulipServices.globalStore(lightContext))
+        SettingsViewModel(
+            ZulipServices.globalStore(lightContext),
+            ZulipServices.preferences(lightContext),
+        )
 
     @Composable
     override fun Content() {
         val themeColors by LightThemeController.colors.collectAsState()
         val state by viewModel.uiState.collectAsState()
+        val notificationPermission = rememberPermissionRequestLauncher(
+            "android.permission.POST_NOTIFICATIONS",
+        )
+        var permissionPokes by remember { mutableIntStateOf(0) }
+        LaunchedEffect(permissionPokes) {
+            if (permissionPokes == 0) return@LaunchedEffect
+            repeat(5) {
+                delay(500)
+                ZulipServices.pokeNotificationAsterisk()
+            }
+        }
 
         LaunchedEffect(state.navigateChooseAccount) {
             if (state.navigateChooseAccount) {
@@ -80,6 +99,20 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
                         }
                     }
 
+                    SettingActionRow(
+                        label = "Notification asterisk",
+                        detail = if (state.notificationAsterisk) "On" else "Off",
+                        onClick = {
+                            val enable = !state.notificationAsterisk
+                            viewModel.setNotificationAsterisk(enable)
+                            if (enable) {
+                                notificationPermission?.launch()
+                                permissionPokes += 1
+                            } else {
+                                ZulipServices.pokeNotificationAsterisk()
+                            }
+                        },
+                    )
                     SettingActionRow(label = "Data leaving this phone", onClick = {
                         navigateTo(screenFactory = { DataDisclosureScreen(it) })
                     })
@@ -97,7 +130,7 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
 }
 
 @Composable
-private fun SettingActionRow(label: String, onClick: () -> Unit) {
+private fun SettingActionRow(label: String, onClick: () -> Unit, detail: String? = null) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -105,5 +138,8 @@ private fun SettingActionRow(label: String, onClick: () -> Unit) {
             .padding(vertical = 0.75f.gridUnitsAsDp()),
     ) {
         LightText(text = label, variant = LightTextVariant.Heading)
+        detail?.let {
+            LightText(text = it, variant = LightTextVariant.Detail, lighten = true)
+        }
     }
 }

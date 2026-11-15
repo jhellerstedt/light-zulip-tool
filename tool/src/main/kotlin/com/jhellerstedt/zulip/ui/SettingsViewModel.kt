@@ -2,6 +2,7 @@ package com.jhellerstedt.zulip.ui
 
 import androidx.lifecycle.viewModelScope
 import com.jhellerstedt.zulip.data.StoredZulipAccount
+import com.jhellerstedt.zulip.data.ZulipPreferences
 import com.jhellerstedt.zulip.store.GlobalStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,10 +15,12 @@ import kotlinx.coroutines.withContext
 data class SettingsUiState(
     val activeAccount: StoredZulipAccount? = null,
     val navigateChooseAccount: Boolean = false,
+    val notificationAsterisk: Boolean = true,
 )
 
 class SettingsViewModel(
     private val globalStore: GlobalStore,
+    private val preferences: ZulipPreferences,
 ) : ZulipViewModel<Unit>(globalStore) {
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
@@ -27,6 +30,17 @@ class SettingsViewModel(
             globalStore.activeAccount.collect { account ->
                 _uiState.update { it.copy(activeAccount = account) }
             }
+        }
+        viewModelScope.launch {
+            preferences.showNotificationAsterisk.collect { enabled ->
+                _uiState.update { it.copy(notificationAsterisk = enabled) }
+            }
+        }
+    }
+
+    fun setNotificationAsterisk(enabled: Boolean) {
+        viewModelScope.launch {
+            preferences.setShowNotificationAsterisk(enabled)
         }
     }
 

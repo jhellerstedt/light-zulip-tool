@@ -8,14 +8,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.rememberKeyboardOptions
+import com.thelightphone.sdk.rememberPermissionRequestLauncher
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightIcons
@@ -31,6 +36,7 @@ import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 import com.jhellerstedt.zulip.ZulipServices
 import com.jhellerstedt.zulip.data.PendingMessageEntity
+import kotlinx.coroutines.delay
 
 class ZulipHomeScreen(sealedActivity: SealedLightActivity) :
     LightScreen<Unit, ZulipHomeViewModel>(sealedActivity) {
@@ -45,6 +51,28 @@ class ZulipHomeScreen(sealedActivity: SealedLightActivity) :
     override fun Content() {
         val themeColors by LightThemeController.colors.collectAsState()
         val state by viewModel.uiState.collectAsState()
+        val showAsterisk by ZulipServices.preferences(lightContext)
+            .showNotificationAsterisk
+            .collectAsState(initial = true)
+        val notificationPermission = rememberPermissionRequestLauncher(
+            "android.permission.POST_NOTIFICATIONS",
+        )
+        var permissionPokes by remember { mutableIntStateOf(0) }
+
+        LaunchedEffect(Unit) {
+            ZulipServices.startNotificationAsterisk(lightContext)
+            ZulipServices.requestNotificationPermissionIfNeeded(lightContext) {
+                notificationPermission?.launch()
+                permissionPokes += 1
+            }
+        }
+        LaunchedEffect(permissionPokes) {
+            if (permissionPokes == 0) return@LaunchedEffect
+            repeat(5) {
+                delay(500)
+                ZulipServices.pokeNotificationAsterisk()
+            }
+        }
 
         LightTheme(colors = themeColors) {
             Box(
@@ -82,12 +110,15 @@ class ZulipHomeScreen(sealedActivity: SealedLightActivity) :
                             .padding(horizontal = 1f.gridUnitsAsDp()),
                     ) {
                         HomeActionRow(
-                            label = "Streams",
+                            label = unreadLabel("Streams", showAsterisk && state.streamsHaveUnread),
                             detail = "${state.streamCount} streams",
                             onClick = { navigateTo(screenFactory = { StreamListScreen(it) }) },
                         )
                         HomeActionRow(
-                            label = "Direct messages",
+                            label = unreadLabel(
+                                "Direct messages",
+                                showAsterisk && state.directMessagesHaveUnread,
+                            ),
                             detail = "${state.directMessageCount} conversations",
                             onClick = { navigateTo(screenFactory = { DirectMessageListScreen(it) }) },
                         )

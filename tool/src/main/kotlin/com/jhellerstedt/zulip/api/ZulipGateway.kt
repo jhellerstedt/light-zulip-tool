@@ -8,6 +8,7 @@ import com.jhellerstedt.zulip.api.models.StreamTopicsResponse
 import com.jhellerstedt.zulip.api.models.UploadFileResponse
 import com.jhellerstedt.zulip.api.routes.getEvents
 import com.jhellerstedt.zulip.api.routes.getMessages
+import com.jhellerstedt.zulip.api.routes.getRecentMessages
 import com.jhellerstedt.zulip.api.routes.getStreamTopics
 import com.jhellerstedt.zulip.api.routes.registerQueue
 import com.jhellerstedt.zulip.api.routes.sendMessage
@@ -27,6 +28,10 @@ interface ZulipGateway {
     ): GetEventsResponse
 
     suspend fun messages(client: ZulipClient, narrow: Narrow): GetMessagesResponse
+
+    /** Newest messages across the realm, used to order streams by activity. */
+    suspend fun recentMessages(client: ZulipClient): GetMessagesResponse =
+        GetMessagesResponse(result = "success")
 
     suspend fun topics(client: ZulipClient, streamId: Int): StreamTopicsResponse
 
@@ -55,6 +60,9 @@ class DefaultZulipGateway : ZulipGateway {
 
     override suspend fun messages(client: ZulipClient, narrow: Narrow): GetMessagesResponse =
         getMessages(client, narrow)
+
+    override suspend fun recentMessages(client: ZulipClient): GetMessagesResponse =
+        getRecentMessages(client)
 
     override suspend fun topics(client: ZulipClient, streamId: Int): StreamTopicsResponse =
         getStreamTopics(client, streamId)

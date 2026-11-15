@@ -60,6 +60,13 @@ class ZulipCacheRepository(
     suspend fun topics(accountId: Long, streamId: Int): List<ZulipTopic> =
         dao.topics(accountId, streamId).map { it.toZulipTopic() }
 
+    suspend fun hasUnread(accountId: Long): Boolean =
+        dao.conversations(accountId).any { it.unreadCount > 0 }
+
+    suspend fun clearConversationUnread(accountId: Long, narrowKey: String) {
+        dao.updateConversationUnreadCount(accountId, narrowKey, 0)
+    }
+
     suspend fun replaceRegisterSnapshot(
         accountId: Long,
         response: RegisterQueueResponse,

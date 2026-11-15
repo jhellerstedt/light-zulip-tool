@@ -11,6 +11,8 @@ import com.jhellerstedt.zulip.data.StoredZulipAccount
 import com.jhellerstedt.zulip.store.Narrow
 import com.jhellerstedt.zulip.store.ZulipStore
 import com.jhellerstedt.zulip.store.cacheKey
+import com.jhellerstedt.zulip.store.unreadStreamIds
+import com.jhellerstedt.zulip.store.unreadTopicNames
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -69,6 +71,12 @@ class UnreadSnapshotTest {
         val conversation = store.inbox.value.single()
         assertEquals(Narrow.Topic(59, "announcements"), conversation.narrow)
         assertEquals(1, conversation.unreadCount)
+        assertEquals(setOf(59), store.unreadCounts.value.unreadStreamIds())
+        assertEquals(setOf("announcements"), store.unreadCounts.value.unreadTopicNames(59))
+
+        store.clearUnreadLocally(Narrow.Topic(59, "announcements"))
+
+        assertEquals(emptyMap(), store.unreadCounts.value)
         store.client.close()
     }
 

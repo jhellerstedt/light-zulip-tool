@@ -7,6 +7,7 @@ import com.jhellerstedt.zulip.data.AccountRepository
 import com.jhellerstedt.zulip.data.FileOutboxFileStore
 import com.jhellerstedt.zulip.data.ZulipCacheRepository
 import com.jhellerstedt.zulip.data.ZulipDatabase
+import com.jhellerstedt.zulip.data.ZulipPreferences
 import com.jhellerstedt.zulip.store.GlobalStore
 import com.jhellerstedt.zulip.store.LightOutboxScheduler
 import com.jhellerstedt.zulip.store.OutboxScheduler
@@ -15,6 +16,19 @@ import com.jhellerstedt.zulip.store.ZulipSyncCoordinator
 import com.jhellerstedt.zulip.data.ZulipOutboxRepository
 import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.buildDatabase
+import com.thelightphone.sdk.checkPermission
+import com.thelightphone.sdk.shared.LightServiceMethod
+import com.thelightphone.sdk.shared.asKotlinResult
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 object ZulipServices {
     @Volatile
@@ -43,6 +57,13 @@ object ZulipServices {
 
     @Volatile
     private var outboxScheduler: OutboxScheduler? = null
+
+    @Volatile
+    private var preferences: ZulipPreferences? = null
+
+    private val asteriskPoke = MutableStateFlow(0)
+    private var asteriskScope: CoroutineScope? = null
+    private var notificationPermissionRequested = false
 
     fun database(context: SealedLightContext): ZulipDatabase {
         return database ?: synchronized(this) {
@@ -132,6 +153,74 @@ object ZulipServices {
         return ZulipClient(account.realmUrl, account.email, apiKey)
     }
 
+    fun preferences(context: SealedLightContext): ZulipPreferences {
+        return preferences ?: synchronized(this) {
+            preferences ?: ZulipPreferences(context.dataStore).also { preferences = it }
+        }
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun startNotificationAsterisk(context: SealedLightContext) {
+        if (asteriskScope != null) return
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        asteriskScope = scope
+        val store = globalStore(context)
+        scope.launch {
+            combine(
+                preferences(context).showNotificationAsterisk,
+                store.activeStore.flatMapLatest { active ->
+                    active?.unreadCounts ?: flowOf(emptyMap())
+                },
+                asteriskPoke,
+            ) { enabled, counts, _ ->
+                enabled to counts.values.any { it > 0 }
+            }.collect { (enabled, activeUnread) ->
+                val anyUnread = activeUnread || withContext(Dispatchers.IO) {
+                    inactiveRealmHasUnread(context)
+                }
+                val granted = notificationPermissionGranted()
+                when (notificationAsteriskAction(enabled, anyUnread, granted)) {
+                    NotificationAsteriskAction.Post ->
+                        context.notifications.post("Zulip", "Unread messages")
+                    NotificationAsteriskAction.Clear ->
+                        context.notifications.cancel()
+                }
+            }
+        }
+    }
+
+    fun pokeNotificationAsterisk() {
+        asteriskPoke.value += 1
+    }
+
+    fun requestNotificationPermissionIfNeeded(
+        context: SealedLightContext,
+        launch: () -> Unit,
+    ) {
+        if (notificationPermissionRequested) return
+        notificationPermissionRequested = true
+        val scope = asteriskScope ?: return
+        scope.launch {
+            val enabled = preferences(context).showNotificationAsterisk.first()
+            if (enabled && !notificationPermissionGranted()) {
+                launch()
+            }
+        }
+    }
+
+    private suspend fun inactiveRealmHasUnread(context: SealedLightContext): Boolean {
+        val activeId = globalStore(context).activeAccount.value?.id
+        return accountRepository(context).getAllAccounts().any { account ->
+            account.id != activeId && cacheRepository(context).hasUnread(account.id)
+        }
+    }
+
+    private suspend fun notificationPermissionGranted(): Boolean =
+        checkPermission(NOTIFICATION_PERMISSION)
+            .asKotlinResult
+            .getOrNull()
+            ?.permissionResult == LightServiceMethod.GetPermission.Result.Granted
+
     fun globalStore(context: SealedLightContext): GlobalStore {
         return globalStore ?: synchronized(this) {
             globalStore ?: GlobalStore(
@@ -146,4 +235,6 @@ object ZulipServices {
             ).also { globalStore = it }
         }
     }
+
+    private const val NOTIFICATION_PERMISSION = "android.permission.POST_NOTIFICATIONS"
 }

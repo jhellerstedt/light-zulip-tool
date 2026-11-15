@@ -36,7 +36,7 @@ class MessageListViewModel internal constructor(
         narrow = narrow,
         cachedMessages = { globalStore.loadMessages(narrow) },
         refreshMessages = { globalStore.refreshMessages(narrow) },
-        markRead = { globalStore.activeStore.value?.markNarrowRead(narrow) },
+        markRead = { globalStore.markNarrowRead(narrow) },
         storeSnapshot = { globalStore.activeStore.value },
         connectionState = { globalStore.activeStore.value?.connectionState?.value },
         pauseEventSync = globalStore::pauseEventSync,
@@ -87,6 +87,9 @@ class MessageListViewModel internal constructor(
                                 null
                             },
                         )
+                    }
+                    if (cached.isNotEmpty()) {
+                        markRead()
                     }
                 }
         }

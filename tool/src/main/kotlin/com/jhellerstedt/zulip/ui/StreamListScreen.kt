@@ -40,6 +40,10 @@ class StreamListScreen(sealedActivity: SealedLightActivity) :
     override fun Content() {
         val themeColors by LightThemeController.colors.collectAsState()
         val streams by viewModel.streams.collectAsState()
+        val unreadStreamIds by viewModel.unreadStreamIds.collectAsState()
+        val showAsterisk by ZulipServices.preferences(lightContext)
+            .showNotificationAsterisk
+            .collectAsState(initial = true)
 
         LightTheme(colors = themeColors) {
             Column(
@@ -71,7 +75,13 @@ class StreamListScreen(sealedActivity: SealedLightActivity) :
                                 }
                                 .padding(vertical = 0.75f.gridUnitsAsDp()),
                         ) {
-                            LightText(text = stream.name, variant = LightTextVariant.Heading)
+                            LightText(
+                                text = unreadLabel(
+                                    stream.name,
+                                    showAsterisk && stream.streamId in unreadStreamIds,
+                                ),
+                                variant = LightTextVariant.Heading,
+                            )
                             if (stream.description.isNotBlank()) {
                                 LightText(
                                     text = stream.description,

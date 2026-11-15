@@ -3,15 +3,18 @@ package com.jhellerstedt.zulip.ui
 import androidx.lifecycle.viewModelScope
 import com.jhellerstedt.zulip.store.GlobalStore
 import com.jhellerstedt.zulip.store.Narrow
+import com.jhellerstedt.zulip.store.cacheKey
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 data class DirectMessageRow(
     val title: String,
     val narrow: Narrow.Dm,
+    val unread: Boolean = false,
 )
 
 class DirectMessageListViewModel(
@@ -31,8 +34,8 @@ class DirectMessageListViewModel(
                     return@collect
                 }
                 observerJob = viewModelScope.launch {
-                    store.recentDirectMessages.collect { conversations ->
-                        _rows.value = conversations.map { conversation ->
+                    combine(store.recentDirectMessages, store.unreadCounts) { conversations, unread ->
+                        conversations.map { conversation ->
                             val narrow = Narrow.Dm(conversation.userIds)
                             val userNames = conversation.userIds.mapNotNull { id ->
                                 store.userName(id)?.let { id to it }
@@ -40,8 +43,11 @@ class DirectMessageListViewModel(
                             DirectMessageRow(
                                 title = narrow.displayTitle(emptyMap(), userNames),
                                 narrow = narrow,
+                                unread = (unread[narrow.cacheKey()] ?: 0) > 0,
                             )
                         }
+                    }.collect { rows ->
+                        _rows.value = rows
                     }
                 }
             }

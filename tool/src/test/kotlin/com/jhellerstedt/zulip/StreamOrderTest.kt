@@ -72,6 +72,43 @@ class StreamOrderTest {
         }
     }
 
+    @Test
+    fun recentMessagesOrderAStreamThatHasNoUnread() {
+        val store = store()
+        try {
+            store.applyRegisterResponse(
+                json.decodeFromString(
+                    """
+                    {
+                      "result": "success",
+                      "subscriptions": [
+                        {"name": "quiet", "stream_id": 1},
+                        {"name": "old", "stream_id": 2}
+                      ]
+                    }
+                    """.trimIndent(),
+                ),
+            )
+
+            store.recordStreamActivity(
+                listOf(
+                    ZulipMessage(
+                        id = 80,
+                        type = "stream",
+                        content = "latest",
+                        streamId = 1,
+                        topic = "chat",
+                        flags = listOf("read"),
+                    ),
+                ),
+            )
+
+            assertEquals(listOf("quiet", "old"), store.streamsList.value.map { it.name })
+        } finally {
+            store.client.close()
+        }
+    }
+
     private fun store(): ZulipStore = ZulipStore(
         account = StoredZulipAccount(
             id = 1L,

@@ -51,6 +51,9 @@ class TopicListScreen(
     override fun Content() {
         val themeColors by LightThemeController.colors.collectAsState()
         val state by viewModel.uiState.collectAsState()
+        val showAsterisk by ZulipServices.preferences(lightContext)
+            .showNotificationAsterisk
+            .collectAsState(initial = true)
 
         LaunchedEffect(streamId) {
             viewModel.loadTopics()
@@ -96,6 +99,7 @@ class TopicListScreen(
                             )
                         } else {
                             state.topics.forEach { topic ->
+                                val topicUnread = showAsterisk && topic.name in state.unreadTopicNames
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -110,11 +114,14 @@ class TopicListScreen(
                                 ) {
                                     if (isGeneralChatTopic(topic.name)) {
                                         BasicText(
-                                            text = topicDisplayName(topic.name),
+                                            text = unreadLabel(topicDisplayName(topic.name), topicUnread),
                                             style = generalChatHeadingStyle(),
                                         )
                                     } else {
-                                        LightText(text = topic.name, variant = LightTextVariant.Heading)
+                                        LightText(
+                                            text = unreadLabel(topic.name, topicUnread),
+                                            variant = LightTextVariant.Heading,
+                                        )
                                     }
                                 }
                             }

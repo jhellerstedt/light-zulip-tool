@@ -101,6 +101,22 @@ suspend fun getStreamTopics(
     return json.decodeFromString(body)
 }
 
+suspend fun getRecentMessages(
+    client: ZulipClient,
+    numBefore: Int = 200,
+): GetMessagesResponse {
+    val body = client.get(
+        "messages",
+        params = mapOf(
+            "anchor" to "newest",
+            "num_before" to numBefore.toString(),
+            "num_after" to "0",
+            "narrow" to "[]",
+        ),
+    )
+    return json.decodeFromString(body)
+}
+
 suspend fun getMessages(
     client: ZulipClient,
     narrow: Narrow,

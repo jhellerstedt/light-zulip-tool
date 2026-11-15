@@ -39,6 +39,9 @@ class DirectMessageListScreen(sealedActivity: SealedLightActivity) :
     override fun Content() {
         val themeColors by LightThemeController.colors.collectAsState()
         val rows by viewModel.rows.collectAsState()
+        val showAsterisk by ZulipServices.preferences(lightContext)
+            .showNotificationAsterisk
+            .collectAsState(initial = true)
 
         LightTheme(colors = themeColors) {
             Column(
@@ -73,7 +76,10 @@ class DirectMessageListScreen(sealedActivity: SealedLightActivity) :
                                     }
                                     .padding(vertical = 0.75f.gridUnitsAsDp()),
                             ) {
-                                LightText(text = row.title, variant = LightTextVariant.Heading)
+                                LightText(
+                                    text = unreadLabel(row.title, showAsterisk && row.unread),
+                                    variant = LightTextVariant.Heading,
+                                )
                             }
                         }
                     }

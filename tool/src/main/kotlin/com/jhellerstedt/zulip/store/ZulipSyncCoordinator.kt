@@ -36,6 +36,13 @@ class ZulipSyncCoordinator(
             val response = registerWithCompatibilityRetry(store)
             cache.replaceRegisterSnapshot(store.account.id, response, response.toInboxConversations())
             store.applyRegisterResponse(response)
+            try {
+                store.recordStreamActivity(gateway.recentMessages(store.client).messages)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // The register still succeeded. Stream order uses the messages it already has.
+            }
             store.setConnectionState(ConnectionState.ONLINE)
             Result.success(Unit)
         } catch (cancelled: CancellationException) {
@@ -71,12 +78,32 @@ class ZulipSyncCoordinator(
     suspend fun cachedTopics(store: ZulipStore, streamId: Int): List<ZulipTopic> =
         cache.topics(store.account.id, streamId)
 
+    /**
+     * Each stream's newest topic id is the activity used to sort the stream list.
+     * One failed stream is skipped so the rest can still move.
+     */
+    suspend fun indexStreamActivity(store: ZulipStore) {
+        val streamIds = store.streamsList.value.map { it.streamId }
+        for (streamId in streamIds) {
+            try {
+                val topics = gateway.topics(store.client, streamId).topics.byLatestActivity()
+                cache.replaceTopics(store.account.id, streamId, topics)
+                store.noteStreamActivity(streamId, topics.maxOfOrNull { it.maxId } ?: 0)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                continue
+            }
+        }
+    }
+
     suspend fun refreshTopics(store: ZulipStore, streamId: Int): Result<List<ZulipTopic>> {
         store.setConnectionState(ConnectionState.REFRESHING)
         return try {
             val response = gateway.topics(store.client, streamId)
-            val topics = response.topics.sortedByDescending { it.maxId }
+            val topics = response.topics.byLatestActivity()
             cache.replaceTopics(store.account.id, streamId, topics)
+            store.noteStreamActivity(streamId, topics.maxOfOrNull { it.maxId } ?: 0)
             store.setConnectionState(ConnectionState.ONLINE)
             Result.success(topics)
         } catch (cancelled: CancellationException) {

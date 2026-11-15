@@ -311,6 +311,33 @@ class ZulipSyncCoordinatorTest {
         store.client.close()
     }
 
+    @Test
+    fun indexingTopicsOrdersStreamsByTheirNewestTopic() = runTest {
+        val dao = FakeSyncCacheDao()
+        val cache = ZulipCacheRepository(dao, nowMillis = { now })
+        val gateway = FakeZulipGateway()
+        gateway.topicsByStream = mapOf(
+            1 to listOf(ZulipTopic("old", 4)),
+            2 to listOf(ZulipTopic("new", 40)),
+        )
+        val coordinator = ZulipSyncCoordinator(gateway, cache)
+        val store = fixtureStore()
+        store.applyRegisterResponse(
+            RegisterQueueResponse(
+                result = "success",
+                subscriptions = listOf(
+                    ZulipStream("quiet", 1, "", false),
+                    ZulipStream("busy", 2, "", false),
+                ),
+            ),
+        )
+
+        coordinator.indexStreamActivity(store)
+
+        assertEquals(listOf("busy", "quiet"), store.streamsList.value.map { it.name })
+        store.client.close()
+    }
+
     private fun fixtureStore(account: StoredZulipAccount = fixtureAccount()): ZulipStore = ZulipStore(
         account = account,
         client = ZulipClient(account.realmUrl, account.email, "api-key"),
@@ -368,6 +395,7 @@ private class FakeZulipGateway : ZulipGateway {
 
     var messagesResponse: GetMessagesResponse? = null
     var topicsResponse: StreamTopicsResponse? = null
+    var topicsByStream: Map<Int, List<ZulipTopic>> = emptyMap()
 
     override suspend fun register(client: ZulipClient, featureLevel: Int): RegisterQueueResponse {
         registerFeatureLevels += featureLevel
@@ -392,7 +420,9 @@ private class FakeZulipGateway : ZulipGateway {
         messagesResponse ?: error("no messages response configured")
 
     override suspend fun topics(client: ZulipClient, streamId: Int): StreamTopicsResponse =
-        topicsResponse ?: error("no topics response configured")
+        topicsByStream[streamId]?.let { StreamTopicsResponse(result = "success", topics = it) }
+            ?: topicsResponse
+            ?: error("no topics response configured")
 
     override suspend fun upload(client: ZulipClient, attachment: PendingUploadAttachment): UploadFileResponse =
         throw UnsupportedOperationException("not used in these tests")
