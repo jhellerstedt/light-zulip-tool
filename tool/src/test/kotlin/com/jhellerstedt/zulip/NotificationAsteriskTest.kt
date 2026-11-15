@@ -5,6 +5,8 @@ import com.jhellerstedt.zulip.store.byLatestActivity
 import com.jhellerstedt.zulip.ui.unreadLabel
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class NotificationAsteriskTest {
     @Test
@@ -41,6 +43,13 @@ class NotificationAsteriskTest {
                 permissionGranted = false,
             ),
         )
+    }
+
+    @Test
+    fun blockedNotificationPermissionDoesNotOpenThePrompt() {
+        assertTrue(launchNotificationPermissionPrompt(NotificationPermission.Denied))
+        assertFalse(launchNotificationPermissionPrompt(NotificationPermission.Granted))
+        assertFalse(launchNotificationPermissionPrompt(NotificationPermission.Unavailable))
     }
 
     @Test

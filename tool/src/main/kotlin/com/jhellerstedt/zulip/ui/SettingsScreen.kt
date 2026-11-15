@@ -1,6 +1,7 @@
 package com.jhellerstedt.zulip.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,12 +11,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.rememberPermissionRequestLauncher
+import com.thelightphone.sdk.ui.LightFullscreenModal
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightIcons
@@ -29,8 +33,11 @@ import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
+import com.jhellerstedt.zulip.NotificationPermission
 import com.jhellerstedt.zulip.ZulipServices
+import com.jhellerstedt.zulip.launchNotificationPermissionPrompt
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class SettingsScreen(sealedActivity: SealedLightActivity) :
     LightScreen<Unit, SettingsViewModel>(sealedActivity) {
@@ -51,7 +58,9 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
         val notificationPermission = rememberPermissionRequestLauncher(
             "android.permission.POST_NOTIFICATIONS",
         )
+        val scope = rememberCoroutineScope()
         var permissionPokes by remember { mutableIntStateOf(0) }
+        var permissionNote by remember { mutableStateOf<String?>(null) }
         LaunchedEffect(permissionPokes) {
             if (permissionPokes == 0) return@LaunchedEffect
             repeat(5) {
@@ -68,6 +77,7 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
         }
 
         LightTheme(colors = themeColors) {
+            Box(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -105,11 +115,22 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
                         onClick = {
                             val enable = !state.notificationAsterisk
                             viewModel.setNotificationAsterisk(enable)
-                            if (enable) {
-                                notificationPermission?.launch()
-                                permissionPokes += 1
-                            } else {
+                            if (!enable) {
                                 ZulipServices.pokeNotificationAsterisk()
+                                return@SettingActionRow
+                            }
+                            scope.launch {
+                                val permission = ZulipServices.notificationPermission()
+                                if (launchNotificationPermissionPrompt(permission)) {
+                                    notificationPermission?.launch()
+                                    permissionPokes += 1
+                                } else {
+                                    ZulipServices.pokeNotificationAsterisk()
+                                    if (permission == NotificationPermission.Unavailable) {
+                                        permissionNote =
+                                            "Unread marks inside Zulip stay on. This phone won't put an asterisk beside Zulip."
+                                    }
+                                }
                             }
                         },
                     )
@@ -124,6 +145,13 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
                 }
 
                 LightBottomBar(items = listOf(null, null, null))
+            }
+            permissionNote?.let { message ->
+                LightFullscreenModal(
+                    message = message,
+                    onClose = { permissionNote = null },
+                )
+            }
             }
         }
     }

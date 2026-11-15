@@ -202,9 +202,21 @@ object ZulipServices {
         val scope = asteriskScope ?: return
         scope.launch {
             val enabled = preferences(context).showNotificationAsterisk.first()
-            if (enabled && !notificationPermissionGranted()) {
+            if (enabled && launchNotificationPermissionPrompt(notificationPermission())) {
                 launch()
             }
+        }
+    }
+
+    suspend fun notificationPermission(): NotificationPermission {
+        val result = checkPermission(NOTIFICATION_PERMISSION)
+            .asKotlinResult
+            .getOrNull()
+            ?.permissionResult
+        return when (result) {
+            LightServiceMethod.GetPermission.Result.Granted -> NotificationPermission.Granted
+            LightServiceMethod.GetPermission.Result.Denied -> NotificationPermission.Denied
+            else -> NotificationPermission.Unavailable
         }
     }
 
@@ -216,10 +228,7 @@ object ZulipServices {
     }
 
     private suspend fun notificationPermissionGranted(): Boolean =
-        checkPermission(NOTIFICATION_PERMISSION)
-            .asKotlinResult
-            .getOrNull()
-            ?.permissionResult == LightServiceMethod.GetPermission.Result.Granted
+        notificationPermission() == NotificationPermission.Granted
 
     fun globalStore(context: SealedLightContext): GlobalStore {
         return globalStore ?: synchronized(this) {
