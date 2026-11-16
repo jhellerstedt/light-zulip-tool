@@ -54,7 +54,16 @@ fun buildRegisterQueueFormParams(zulipFeatureLevel: Int): Map<String, String> {
             listOf("message", "subscription", "update_message_flags", "realm_user"),
         ),
         "fetch_event_types" to json.encodeToString(
-            listOf("message", "subscription", "realm", "realm_user", "recent_private_conversations"),
+            listOf(
+                "message",
+                // Zulip includes unread_msgs only when both message and
+                // update_message_flags are requested.
+                "update_message_flags",
+                "subscription",
+                "realm",
+                "realm_user",
+                "recent_private_conversations",
+            ),
         ),
         "apply_markdown" to "false",
         "slim_presence" to "true",

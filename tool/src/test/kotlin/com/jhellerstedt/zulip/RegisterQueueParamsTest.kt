@@ -37,6 +37,15 @@ class RegisterQueueParamsTest {
     }
 
     @Test
+    fun registerFetchRequestsUnreadMessages() {
+        val params = buildRegisterQueueFormParams(zulipFeatureLevel = 481)
+
+        val fetchTypes = params.getValue("fetch_event_types")
+        assertTrue(fetchTypes.contains("\"message\""))
+        assertTrue(fetchTypes.contains("\"update_message_flags\""))
+    }
+
+    @Test
     fun registerFetchRequestsRecentPrivateConversations() {
         val params = buildRegisterQueueFormParams(zulipFeatureLevel = 481)
 

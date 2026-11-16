@@ -72,7 +72,9 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
         LaunchedEffect(state.navigateChooseAccount) {
             if (state.navigateChooseAccount) {
                 viewModel.consumeNavigateChooseAccount()
-                navigateTo(screenFactory = { ChooseAccountScreen(it, false) })
+                navigateTo(screenFactory = { ChooseAccountScreen(it, false) }) {
+                    goBack()
+                }
             }
         }
 

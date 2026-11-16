@@ -70,7 +70,7 @@ class ChooseAccountScreen : LightScreen<Unit, ChooseAccountViewModel> {
                 if (autoRestoreActiveAccount) {
                     navigateTo(screenFactory = { ZulipHomeScreen(it) })
                 } else {
-                    goBack()
+                    goBack(Unit)
                 }
             }
         }

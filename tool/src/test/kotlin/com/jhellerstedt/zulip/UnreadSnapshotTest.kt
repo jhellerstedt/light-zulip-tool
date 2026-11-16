@@ -157,4 +157,48 @@ class UnreadSnapshotTest {
         assertTrue(store.getMessagesFor(narrow).single().flags.contains("read"))
         store.client.close()
     }
+
+    @Test
+    fun registerWithoutAnUnreadSnapshotKeepsCachedUnread() {
+        val narrow = Narrow.Topic(59, "announcements")
+        val store = ZulipStore(
+            account = StoredZulipAccount(
+                id = 1L,
+                realmUrl = "https://example.com",
+                realmName = "Example",
+                email = "user@example.com",
+                userId = 1,
+                zulipFeatureLevel = 0,
+            ),
+            client = ZulipClient("https://example.com", "user@example.com", "api-key"),
+        )
+        store.applyCachedSnapshot(
+            CachedAccountSnapshot(
+                streams = listOf(ZulipStream("general", 59, "", false)),
+                users = emptyList(),
+                conversations = listOf(
+                    CachedConversationEntity(
+                        accountId = 1L,
+                        narrowKey = narrow.cacheKey(),
+                        title = "general > announcements",
+                        unreadCount = 4,
+                        lastMessageId = 101,
+                        lastMessageTimestamp = 101L,
+                        updatedAt = 0L,
+                    ),
+                ),
+                messagesByNarrow = emptyMap(),
+            ),
+        )
+
+        store.applyRegisterResponse(
+            RegisterQueueResponse(
+                result = "success",
+                subscriptions = listOf(ZulipStream("general", 59, "", false)),
+            ),
+        )
+
+        assertEquals(4, store.unreadCounts.value[narrow.cacheKey()])
+        store.client.close()
+    }
 }

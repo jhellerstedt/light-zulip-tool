@@ -180,7 +180,9 @@ class ZulipStore(
         }
         syncRecentDirectMessages(response.recentPrivateConversations)
         response.messages.forEach { addMessage(it) }
-        rebuildUnreadFromSnapshot(response.unreadMsgs)
+        // A register response that omits unread_msgs did not fetch that state.
+        // Replacing the cache with an empty map would hide every asterisk.
+        response.unreadMsgs?.let { rebuildUnreadFromSnapshot(it) }
         response.messages.forEach { message ->
             rememberStreamActivity(message)
         }
