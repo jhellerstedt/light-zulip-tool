@@ -146,11 +146,15 @@ class MessageListScreen(
                                 onClick = { goBack() },
                                 contentDescription = "Back",
                             ),
+                            homeBarButton(
+                                globalStore = ZulipServices.globalStore(lightContext),
+                                openMenu = { resetTo { ZulipHomeScreen(it) } },
+                                openRealmList = { resetTo { ChooseAccountScreen(it, false) } },
+                            ),
                             LightBarButton.Text(
                                 text = "COMPOSE",
                                 onClick = { navigateTo(screenFactory = { ComposeScreen(it, narrow) }) },
                             ),
-                            null,
                         ),
                     )
                 }

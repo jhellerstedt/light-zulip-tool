@@ -114,6 +114,16 @@ class ZulipHomeScreen(sealedActivity: SealedLightActivity) :
                             detail = "${state.streamCount} streams",
                             onClick = { navigateTo(screenFactory = { StreamListScreen(it) }) },
                         )
+                        state.recentStreams.forEach { stream ->
+                            HomeShortcutRow(
+                                label = unreadLabel(stream.name, showAsterisk && stream.unread),
+                                onClick = {
+                                    navigateTo(screenFactory = {
+                                        TopicListScreen(it, stream.streamId, stream.name)
+                                    })
+                                },
+                            )
+                        }
                         HomeActionRow(
                             label = unreadLabel(
                                 "Direct messages",
@@ -122,6 +132,14 @@ class ZulipHomeScreen(sealedActivity: SealedLightActivity) :
                             detail = "${state.directMessageCount} conversations",
                             onClick = { navigateTo(screenFactory = { DirectMessageListScreen(it) }) },
                         )
+                        state.recentDirectMessages.forEach { conversation ->
+                            HomeShortcutRow(
+                                label = unreadLabel(conversation.title, showAsterisk && conversation.unread),
+                                onClick = {
+                                    navigateTo(screenFactory = { MessageListScreen(it, conversation.narrow) })
+                                },
+                            )
+                        }
                     }
 
                     LightBottomBar(
@@ -131,7 +149,15 @@ class ZulipHomeScreen(sealedActivity: SealedLightActivity) :
                                 onClick = { navigateTo(screenFactory = { SettingsScreen(it) }) },
                                 contentDescription = "Settings",
                             ),
-                            null,
+                            if (state.showHome) {
+                                homeBarButton(
+                                    globalStore = ZulipServices.globalStore(lightContext),
+                                    openMenu = { resetTo { ZulipHomeScreen(it) } },
+                                    openRealmList = { resetTo { ChooseAccountScreen(it, false) } },
+                                )
+                            } else {
+                                null
+                            },
                             null,
                         ),
                     )
@@ -215,4 +241,23 @@ private fun HomeActionRow(
         LightText(text = label, variant = LightTextVariant.Heading)
         LightText(text = detail, variant = LightTextVariant.Detail, lighten = true)
     }
+}
+
+@Composable
+private fun HomeShortcutRow(
+    label: String,
+    onClick: () -> Unit,
+) {
+    LightText(
+        text = label,
+        variant = LightTextVariant.Heading,
+        modifier = Modifier
+            .fillMaxWidth()
+            .lightClickable(onClick = onClick)
+            .padding(
+                start = 1f.gridUnitsAsDp(),
+                top = 0.75f.gridUnitsAsDp(),
+                bottom = 0.75f.gridUnitsAsDp(),
+            ),
+    )
 }

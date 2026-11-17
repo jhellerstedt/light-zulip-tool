@@ -6,8 +6,12 @@ import com.jhellerstedt.zulip.TOOL_DISPLAY_NAME
 import com.jhellerstedt.zulip.data.PendingMessageEntity
 import com.jhellerstedt.zulip.store.ConnectionState
 import com.jhellerstedt.zulip.store.GlobalStore
+import com.jhellerstedt.zulip.store.Narrow
+import com.jhellerstedt.zulip.store.cacheKey
 import com.jhellerstedt.zulip.store.hasDirectUnread
 import com.jhellerstedt.zulip.store.hasStreamUnread
+import com.jhellerstedt.zulip.store.unreadStreamIds
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,6 +21,19 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+data class HomeStreamShortcut(
+    val streamId: Int,
+    val name: String,
+    val unread: Boolean,
+)
+
+data class HomeDirectShortcut(
+    val title: String,
+    val narrow: Narrow.Dm,
+    val unread: Boolean,
+)
 
 data class ZulipHomeUiState(
     val realmTitle: String = TOOL_DISPLAY_NAME,
@@ -24,6 +41,10 @@ data class ZulipHomeUiState(
     val streamsHaveUnread: Boolean = false,
     val directMessageCount: Int = 0,
     val directMessagesHaveUnread: Boolean = false,
+    val recentStreams: List<HomeStreamShortcut> = emptyList(),
+    val recentDirectMessages: List<HomeDirectShortcut> = emptyList(),
+    val showHome: Boolean = false,
+    val accountCount: Int? = null,
     val isLoading: Boolean = false,
     val connectionState: ConnectionState = ConnectionState.REFRESHING,
     val pendingMessageCount: Int = 0,
@@ -43,6 +64,7 @@ class ZulipHomeViewModel(
     private val _dismissedFailureId = MutableStateFlow<String?>(null)
 
     init {
+        refreshAccountCount()
         viewModelScope.launch {
             globalStore.activeAccount.collect { account ->
                 _uiState.update {
@@ -55,7 +77,13 @@ class ZulipHomeViewModel(
                 storeObserverJob?.cancel()
                 if (store == null) {
                     _uiState.update {
-                        it.copy(streamCount = 0, directMessageCount = 0, isLoading = false)
+                        it.copy(
+                            streamCount = 0,
+                            directMessageCount = 0,
+                            isLoading = false,
+                            recentStreams = emptyList(),
+                            recentDirectMessages = emptyList(),
+                        )
                     }
                     return@collect
                 }
@@ -97,6 +125,41 @@ class ZulipHomeViewModel(
                             }
                         }
                     }
+                    launch {
+                        combine(
+                            store.streamsList,
+                            store.recentDirectMessages,
+                            store.unreadCounts,
+                        ) { streams, conversations, unread ->
+                            val unreadStreamIds = unread.unreadStreamIds()
+                            val recentStreams = streams.take(2).map { stream ->
+                                HomeStreamShortcut(
+                                    streamId = stream.streamId,
+                                    name = stream.name,
+                                    unread = stream.streamId in unreadStreamIds,
+                                )
+                            }
+                            val recentDirectMessages = conversations.take(2).map { conversation ->
+                                val narrow = Narrow.Dm(conversation.userIds)
+                                val userNames = conversation.userIds.mapNotNull { id ->
+                                    store.userName(id)?.let { id to it }
+                                }.toMap()
+                                HomeDirectShortcut(
+                                    title = narrow.displayTitle(emptyMap(), userNames),
+                                    narrow = narrow,
+                                    unread = (unread[narrow.cacheKey()] ?: 0) > 0,
+                                )
+                            }
+                            recentStreams to recentDirectMessages
+                        }.collect { (recentStreams, recentDirectMessages) ->
+                            _uiState.update {
+                                it.copy(
+                                    recentStreams = recentStreams,
+                                    recentDirectMessages = recentDirectMessages,
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -119,6 +182,21 @@ class ZulipHomeViewModel(
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         super.onScreenShow(screen)
         refreshFromStore()
+        refreshAccountCount()
+    }
+
+    private fun refreshAccountCount() {
+        viewModelScope.launch {
+            val count = withContext(Dispatchers.IO) {
+                runCatching { globalStore.listAccounts().size }.getOrNull()
+            } ?: return@launch
+            _uiState.update {
+                it.copy(
+                    accountCount = count,
+                    showHome = homeDestination(count) != HomeDestination.Menu,
+                )
+            }
+        }
     }
 
     private fun refreshFromStore() {

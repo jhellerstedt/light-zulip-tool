@@ -92,7 +92,11 @@ class DirectMessageListScreen(sealedActivity: SealedLightActivity) :
                             onClick = { goBack() },
                             contentDescription = "Back",
                         ),
-                        null,
+                        homeBarButton(
+                            globalStore = ZulipServices.globalStore(lightContext),
+                            openMenu = { resetTo { ZulipHomeScreen(it) } },
+                            openRealmList = { resetTo { ChooseAccountScreen(it, false) } },
+                        ),
                         LightBarButton.LightIcon(
                             icon = LightIcons.COMPOSE_MESSAGE,
                             onClick = {

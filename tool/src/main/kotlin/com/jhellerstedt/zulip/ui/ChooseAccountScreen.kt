@@ -162,7 +162,20 @@ class ChooseAccountScreen : LightScreen<Unit, ChooseAccountViewModel> {
                                 text = "ADD",
                                 onClick = viewModel::startAddAccount,
                             ),
-                            null,
+                            if (
+                                !state.isLoading &&
+                                state.accounts.size == 1 &&
+                                !state.navigateHome &&
+                                !state.navigateLogin
+                            ) {
+                                homeBarButton(
+                                    globalStore = ZulipServices.globalStore(lightContext),
+                                    openMenu = { resetTo { ZulipHomeScreen(it) } },
+                                    openRealmList = { resetTo { ChooseAccountScreen(it, false) } },
+                                )
+                            } else {
+                                null
+                            },
                             null,
                         ),
                     )

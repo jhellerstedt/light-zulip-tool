@@ -4,10 +4,17 @@ import com.jhellerstedt.zulip.api.ZulipClient
 import com.jhellerstedt.zulip.api.ZulipGateway
 import com.jhellerstedt.zulip.api.models.GetEventsResponse
 import com.jhellerstedt.zulip.api.models.GetMessagesResponse
+import com.jhellerstedt.zulip.api.models.RecentPrivateConversation
 import com.jhellerstedt.zulip.api.models.RegisterQueueResponse
 import com.jhellerstedt.zulip.api.models.SendMessageResponse
 import com.jhellerstedt.zulip.api.models.StreamTopicsResponse
+import com.jhellerstedt.zulip.api.models.UnreadMsgs
+import com.jhellerstedt.zulip.api.models.UnreadPm
+import com.jhellerstedt.zulip.api.models.UnreadStream
 import com.jhellerstedt.zulip.api.models.UploadFileResponse
+import com.jhellerstedt.zulip.api.models.ZulipMessage
+import com.jhellerstedt.zulip.api.models.ZulipStream
+import com.jhellerstedt.zulip.api.models.ZulipUser
 import com.jhellerstedt.zulip.data.OutboxFileStore
 import com.jhellerstedt.zulip.data.OutboxMessageState
 import com.jhellerstedt.zulip.data.PendingAttachmentEntity
@@ -179,18 +186,169 @@ class ZulipHomeViewModelTest {
         assertEquals(OutboxMessageState.FAILED, outboxDao.message("m1")?.state)
     }
 
+    @Test
+    fun threeStreamsInStoreOrderProduceTheFirstTwoShortcuts() = runTest {
+        val globalStore = buildGlobalStore(InMemoryOutboxDao(), scope = backgroundScope)
+        globalStore.switchAccount(1L).getOrThrow()
+        globalStore.activeStore.value?.applyRegisterResponse(threeStreamRegister())
+        val viewModel = ZulipHomeViewModel(globalStore)
+
+        val state = withTimeout(1_000) {
+            viewModel.uiState.first { it.recentStreams.size == 2 }
+        }
+        assertEquals(listOf("new", "old"), state.recentStreams.map { it.name })
+        assertEquals(listOf(3, 2), state.recentStreams.map { it.streamId })
+    }
+
+    @Test
+    fun oneStreamProducesOneShortcut() = runTest {
+        val globalStore = buildGlobalStore(InMemoryOutboxDao(), scope = backgroundScope)
+        globalStore.switchAccount(1L).getOrThrow()
+        globalStore.activeStore.value?.applyRegisterResponse(
+            RegisterQueueResponse(
+                result = "success",
+                subscriptions = listOf(ZulipStream(name = "quiet", streamId = 1)),
+                messages = listOf(streamMessage(id = 5, streamId = 1)),
+            ),
+        )
+        val viewModel = ZulipHomeViewModel(globalStore)
+
+        val state = withTimeout(1_000) {
+            viewModel.uiState.first { it.recentStreams.size == 1 }
+        }
+        assertEquals(listOf("quiet"), state.recentStreams.map { it.name })
+    }
+
+    @Test
+    fun noStreamsProduceAnEmptyShortcutList() = runTest {
+        val globalStore = buildGlobalStore(InMemoryOutboxDao(), scope = backgroundScope)
+        globalStore.switchAccount(1L).getOrThrow()
+        val viewModel = ZulipHomeViewModel(globalStore)
+
+        val state = withTimeout(1_000) {
+            viewModel.uiState.first { it.streamCount == 0 }
+        }
+        assertEquals(emptyList(), state.recentStreams)
+    }
+
+    @Test
+    fun streamUnreadFlagFollowsUnreadStreamIds() = runTest {
+        val globalStore = buildGlobalStore(InMemoryOutboxDao(), scope = backgroundScope)
+        globalStore.switchAccount(1L).getOrThrow()
+        globalStore.activeStore.value?.applyRegisterResponse(threeStreamRegister(unreadStreamId = 2))
+        val viewModel = ZulipHomeViewModel(globalStore)
+
+        val state = withTimeout(1_000) {
+            viewModel.uiState.first { it.recentStreams.any { stream -> stream.unread } }
+        }
+        assertEquals(listOf(false, true), state.recentStreams.map { it.unread })
+    }
+
+    @Test
+    fun threeDirectMessagesProduceTheFirstTwoWithListTitlesAndUnread() = runTest {
+        val globalStore = buildGlobalStore(InMemoryOutboxDao(), scope = backgroundScope)
+        globalStore.switchAccount(1L).getOrThrow()
+        globalStore.activeStore.value?.applyRegisterResponse(threeDirectMessageRegister())
+        val viewModel = ZulipHomeViewModel(globalStore)
+
+        val state = withTimeout(1_000) {
+            viewModel.uiState.first { it.recentDirectMessages.size == 2 }
+        }
+        assertEquals(listOf("Alice", "Bob"), state.recentDirectMessages.map { it.title })
+        assertEquals(listOf(false, true), state.recentDirectMessages.map { it.unread })
+        assertEquals(
+            listOf(Narrow.Dm(listOf(2)), Narrow.Dm(listOf(3))),
+            state.recentDirectMessages.map { it.narrow },
+        )
+    }
+
+    @Test
+    fun oneSavedAccountHidesHome() = runTest {
+        val globalStore = buildGlobalStore(
+            InMemoryOutboxDao(),
+            scope = backgroundScope,
+            accounts = listOf(fixtureAccount(id = 1L, email = "a@example.com")),
+        )
+        val viewModel = ZulipHomeViewModel(globalStore)
+
+        val state = withTimeout(1_000) {
+            viewModel.uiState.first { it.accountCount == 1 }
+        }
+        assertEquals(false, state.showHome)
+    }
+
+    @Test
+    fun twoSavedAccountsShowHome() = runTest {
+        val globalStore = buildGlobalStore(InMemoryOutboxDao(), scope = backgroundScope)
+        val viewModel = ZulipHomeViewModel(globalStore)
+
+        val state = withTimeout(1_000) {
+            viewModel.uiState.first { it.showHome }
+        }
+        assertEquals(true, state.showHome)
+    }
+
+    private fun threeStreamRegister(unreadStreamId: Int? = null) = RegisterQueueResponse(
+        result = "success",
+        subscriptions = listOf(
+            ZulipStream(name = "quiet", streamId = 1),
+            ZulipStream(name = "old", streamId = 2),
+            ZulipStream(name = "new", streamId = 3),
+        ),
+        messages = listOf(
+            streamMessage(id = 10, streamId = 1),
+            streamMessage(id = 20, streamId = 2),
+            streamMessage(id = 30, streamId = 3),
+        ),
+        unreadMsgs = unreadStreamId?.let { streamId ->
+            UnreadMsgs(
+                streams = listOf(
+                    UnreadStream(
+                        streamId = streamId,
+                        topic = "chat",
+                        unreadMessageIds = listOf(20),
+                    ),
+                ),
+            )
+        },
+    )
+
+    private fun threeDirectMessageRegister() = RegisterQueueResponse(
+        result = "success",
+        realmUsers = listOf(
+            ZulipUser(userId = 2, fullName = "Alice"),
+            ZulipUser(userId = 3, fullName = "Bob"),
+            ZulipUser(userId = 4, fullName = "Carol"),
+        ),
+        recentPrivateConversations = listOf(
+            RecentPrivateConversation(userIds = listOf(4), maxMessageId = 50),
+            RecentPrivateConversation(userIds = listOf(2), maxMessageId = 100),
+            RecentPrivateConversation(userIds = listOf(3), maxMessageId = 80),
+        ),
+        unreadMsgs = UnreadMsgs(
+            pms = listOf(UnreadPm(senderId = 3, unreadMessageIds = listOf(80))),
+        ),
+    )
+
+    private fun streamMessage(id: Int, streamId: Int) = ZulipMessage(
+        id = id,
+        type = "stream",
+        content = "hello",
+        streamId = streamId,
+        topic = "chat",
+    )
+
     private fun buildGlobalStore(
         outboxDao: ZulipOutboxDao,
         scope: kotlinx.coroutines.CoroutineScope,
         callLog: MutableList<String> = mutableListOf(),
         scheduler: OutboxScheduler = LoggingHomeOutboxScheduler(callLog),
+        accounts: List<StoredZulipAccount> = listOf(
+            fixtureAccount(id = 1L, email = "a@example.com"),
+            fixtureAccount(id = 2L, email = "b@example.com"),
+        ),
     ): GlobalStore {
-        val accountStore = FakeHomeAccountStore(
-            listOf(
-                fixtureAccount(id = 1L, email = "a@example.com"),
-                fixtureAccount(id = 2L, email = "b@example.com"),
-            ),
-        )
+        val accountStore = FakeHomeAccountStore(accounts)
         val cache = ZulipCacheRepository(FakeHomeCacheDao(), nowMillis = { now })
         val outboxRepository = ZulipOutboxRepository(outboxDao, NoOpHomeOutboxFileStore())
         val outboxScheduler = scheduler

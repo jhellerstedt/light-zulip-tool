@@ -135,7 +135,11 @@ class TopicListScreen(
                                 onClick = { goBack() },
                                 contentDescription = "Back",
                             ),
-                            null,
+                            homeBarButton(
+                                globalStore = ZulipServices.globalStore(lightContext),
+                                openMenu = { resetTo { ZulipHomeScreen(it) } },
+                                openRealmList = { resetTo { ChooseAccountScreen(it, false) } },
+                            ),
                             null,
                         ),
                     )

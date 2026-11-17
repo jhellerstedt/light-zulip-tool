@@ -81,7 +81,17 @@ class DataDisclosureScreen(sealedActivity: SealedLightActivity) :
                     )
                 }
 
-                LightBottomBar(items = listOf(null, null, null))
+                LightBottomBar(
+                    items = listOf(
+                        null,
+                        homeBarButton(
+                            globalStore = ZulipServices.globalStore(lightContext),
+                            openMenu = { resetTo { ZulipHomeScreen(it) } },
+                            openRealmList = { resetTo { ChooseAccountScreen(it, false) } },
+                        ),
+                        null,
+                    ),
+                )
             }
         }
     }

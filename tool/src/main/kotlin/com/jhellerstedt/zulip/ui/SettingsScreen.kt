@@ -146,7 +146,17 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
                     SettingActionRow(label = "Remove active account", onClick = viewModel::removeActiveAccount)
                 }
 
-                LightBottomBar(items = listOf(null, null, null))
+                LightBottomBar(
+                    items = listOf(
+                        null,
+                        homeBarButton(
+                            globalStore = ZulipServices.globalStore(lightContext),
+                            openMenu = { resetTo { ZulipHomeScreen(it) } },
+                            openRealmList = { resetTo { ChooseAccountScreen(it, false) } },
+                        ),
+                        null,
+                    ),
+                )
             }
             permissionNote?.let { message ->
                 LightFullscreenModal(
