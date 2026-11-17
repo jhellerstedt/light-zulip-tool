@@ -12,7 +12,9 @@ import com.jhellerstedt.zulip.data.ZulipOutboxRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -55,6 +57,8 @@ internal fun classifyEventPollFailure(error: Throwable): EventPollFailure {
     return EventPollFailure.Stopped
 }
 
+internal const val EVENT_SYNC_REREGISTER_AFTER_PAUSE_MILLIS = 10 * 60 * 1000L
+
 class GlobalStore(
     private val accountRepository: ZulipAccountStore,
     private val cacheRepository: ZulipCacheRepository,
@@ -76,10 +80,13 @@ class GlobalStore(
     private val outboxScheduler: OutboxScheduler? = null,
     private val deliverOutbox: (suspend (Long) -> Unit)? = null,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    private val nowMillis: () -> Long = { System.currentTimeMillis() },
 ) {
     private val poller = EventPoller(scope, gateway, coordinator)
     private val switchMutex = Mutex()
     private var eventSyncPaused = false
+    private var eventSyncPausedAtMillis: Long? = null
+    private var resumeReregisterJob: Job? = null
 
     private val stores = mutableMapOf<Long, ZulipStore>()
     private val clients = mutableMapOf<Long, ZulipClient>()
@@ -148,13 +155,30 @@ class GlobalStore(
     }
 
     fun pauseEventSync() {
+        if (!eventSyncPaused) {
+            eventSyncPausedAtMillis = nowMillis()
+        }
         eventSyncPaused = true
         poller.stop()
     }
 
     fun resumeEventSync() {
+        val pausedAt = eventSyncPausedAtMillis
+        val pausedForMillis = if (pausedAt == null) 0L else nowMillis() - pausedAt
         eventSyncPaused = false
+        eventSyncPausedAtMillis = null
         val store = _activeStore.value ?: return
+        if (pausedForMillis >= EVENT_SYNC_REREGISTER_AFTER_PAUSE_MILLIS) {
+            resumeReregisterJob?.cancel()
+            resumeReregisterJob = scope.launch {
+                coordinator.register(store)
+                if (!isActive) return@launch
+                if (_activeStore.value !== store || eventSyncPaused) return@launch
+                startEventSyncIfNeeded(store)
+            }
+            return
+        }
+        if (resumeReregisterJob?.isActive == true) return
         startEventSyncIfNeeded(store)
     }
 

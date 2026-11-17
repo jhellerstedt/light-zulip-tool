@@ -23,13 +23,16 @@ import com.jhellerstedt.zulip.data.ZulipCacheDao
 import com.jhellerstedt.zulip.data.ZulipCacheRepository
 import com.jhellerstedt.zulip.data.ZulipOutboxDao
 import com.jhellerstedt.zulip.data.ZulipOutboxRepository
+import com.jhellerstedt.zulip.store.EVENT_SYNC_REREGISTER_AFTER_PAUSE_MILLIS
 import com.jhellerstedt.zulip.store.GlobalStore
 import com.jhellerstedt.zulip.store.Narrow
 import com.jhellerstedt.zulip.store.OutboxScheduler
 import com.jhellerstedt.zulip.store.PendingUploadAttachment
 import com.jhellerstedt.zulip.store.cacheKey
 import java.io.File
+import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -168,6 +171,214 @@ class GlobalStoreTest {
         globalStore.resumeEventSync()
         runCurrent()
         assertEquals(listOf("queue-a"), gateway.eventsCalls)
+        store.client.close()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun shortPauseResumesTheSameQueueWithoutReregistering() = runTest {
+        var clock = 0L
+        val gateway = FakeGlobalGateway()
+        gateway.nextRegisterResponse = RegisterQueueResponse(result = "success", queueId = "queue-b")
+        val globalStore = newGlobalStore(gateway, backgroundScope) { clock }
+        val store = globalStore.switchAccount(2L).getOrThrow()
+        runCurrent()
+
+        globalStore.pauseEventSync()
+        clock += EVENT_SYNC_REREGISTER_AFTER_PAUSE_MILLIS - 1
+        globalStore.resumeEventSync()
+        runCurrent()
+
+        assertEquals(1, gateway.registerCallCount)
+        assertEquals(listOf("queue-b", "queue-b"), gateway.eventsCalls)
+        store.client.close()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun longPauseReregistersBeforePolling() = runTest {
+        var clock = 0L
+        val gateway = FakeGlobalGateway()
+        gateway.nextRegisterResponse = RegisterQueueResponse(result = "success", queueId = "queue-old")
+        val globalStore = newGlobalStore(gateway, backgroundScope) { clock }
+        val store = globalStore.switchAccount(2L).getOrThrow()
+        runCurrent()
+
+        globalStore.pauseEventSync()
+        clock += EVENT_SYNC_REREGISTER_AFTER_PAUSE_MILLIS
+        gateway.nextRegisterResponse = RegisterQueueResponse(result = "success", queueId = "queue-new")
+        globalStore.resumeEventSync()
+        runCurrent()
+
+        assertEquals(2, gateway.registerCallCount)
+        assertEquals("queue-new", store.queueId)
+        assertEquals(listOf("queue-old", "queue-new"), gateway.eventsCalls)
+        store.client.close()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun longPauseRegisterDoesNotStartThePollerIfPausedAgain() = runTest {
+        var clock = 0L
+        val gateway = FakeGlobalGateway()
+        gateway.nextRegisterResponse = RegisterQueueResponse(result = "success", queueId = "queue-old")
+        val globalStore = newGlobalStore(gateway, backgroundScope) { clock }
+        val store = globalStore.switchAccount(2L).getOrThrow()
+        runCurrent()
+
+        gateway.blockOnCall = 2
+        globalStore.pauseEventSync()
+        clock += EVENT_SYNC_REREGISTER_AFTER_PAUSE_MILLIS
+        globalStore.resumeEventSync()
+        runCurrent()
+        assertEquals(2, gateway.registerCallCount)
+
+        globalStore.pauseEventSync()
+        gateway.blockedRegister.complete(RegisterQueueResponse(result = "success", queueId = "queue-new"))
+        runCurrent()
+
+        assertEquals("queue-new", store.queueId)
+        assertEquals(listOf("queue-old"), gateway.eventsCalls)
+        store.client.close()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun longPauseRegisterDoesNotPollAfterAccountSwitch() = runTest {
+        var clock = 0L
+        val gateway = FakeGlobalGateway()
+        gateway.nextRegisterResponse = RegisterQueueResponse(result = "success", queueId = "queue-a")
+        val globalStore = newGlobalStore(
+            gateway,
+            backgroundScope,
+            accounts = listOf(
+                fixtureAccount(id = 1L, email = "a@example.com"),
+                fixtureAccount(id = 2L, email = "b@example.com"),
+            ),
+        ) { clock }
+        val storeA = globalStore.switchAccount(1L).getOrThrow()
+        runCurrent()
+
+        gateway.blockOnCall = 2
+        globalStore.pauseEventSync()
+        clock += EVENT_SYNC_REREGISTER_AFTER_PAUSE_MILLIS
+        globalStore.resumeEventSync()
+        runCurrent()
+        assertEquals(2, gateway.registerCallCount)
+
+        gateway.nextRegisterResponse = RegisterQueueResponse(result = "success", queueId = "queue-b")
+        val storeB = globalStore.switchAccount(2L).getOrThrow()
+        runCurrent()
+        gateway.blockedRegister.complete(RegisterQueueResponse(result = "success", queueId = "queue-a-new"))
+        runCurrent()
+
+        assertEquals("queue-a-new", storeA.queueId)
+        assertEquals(listOf("queue-a", "queue-b"), gateway.eventsCalls)
+        storeA.client.close()
+        storeB.client.close()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun repeatedPauseKeepsTheOriginalTimestamp() = runTest {
+        var clock = 0L
+        val gateway = FakeGlobalGateway()
+        gateway.nextRegisterResponse = RegisterQueueResponse(result = "success", queueId = "queue-old")
+        val globalStore = newGlobalStore(gateway, backgroundScope) { clock }
+        val store = globalStore.switchAccount(2L).getOrThrow()
+        runCurrent()
+
+        globalStore.pauseEventSync()
+        clock += 9 * 60 * 1000
+        globalStore.pauseEventSync()
+        clock += 2 * 60 * 1000
+        gateway.nextRegisterResponse = RegisterQueueResponse(result = "success", queueId = "queue-new")
+        globalStore.resumeEventSync()
+        runCurrent()
+
+        assertEquals(2, gateway.registerCallCount)
+        assertEquals(listOf("queue-old", "queue-new"), gateway.eventsCalls)
+        store.client.close()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun failedLongPauseRegisterStillPollsThePreviousQueue() = runTest {
+        var clock = 0L
+        val gateway = FakeGlobalGateway()
+        gateway.nextRegisterResponse = RegisterQueueResponse(result = "success", queueId = "queue-old")
+        val globalStore = newGlobalStore(gateway, backgroundScope) { clock }
+        val store = globalStore.switchAccount(2L).getOrThrow()
+        runCurrent()
+
+        gateway.registerError = IOException("offline")
+        globalStore.pauseEventSync()
+        clock += EVENT_SYNC_REREGISTER_AFTER_PAUSE_MILLIS
+        globalStore.resumeEventSync()
+        runCurrent()
+
+        assertEquals(2, gateway.registerCallCount)
+        assertEquals("queue-old", store.queueId)
+        assertEquals(listOf("queue-old", "queue-old"), gateway.eventsCalls)
+        store.client.close()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun secondLongPauseResumeCancelsTheInFlightRegister() = runTest {
+        var clock = 0L
+        val gateway = FakeGlobalGateway()
+        gateway.nextRegisterResponse = RegisterQueueResponse(result = "success", queueId = "queue-old")
+        val globalStore = newGlobalStore(gateway, backgroundScope) { clock }
+        val store = globalStore.switchAccount(2L).getOrThrow()
+        runCurrent()
+
+        gateway.blockOnCall = 2
+        globalStore.pauseEventSync()
+        clock += EVENT_SYNC_REREGISTER_AFTER_PAUSE_MILLIS
+        globalStore.resumeEventSync()
+        runCurrent()
+        assertEquals(2, gateway.registerCallCount)
+
+        globalStore.pauseEventSync()
+        clock += EVENT_SYNC_REREGISTER_AFTER_PAUSE_MILLIS
+        gateway.nextRegisterResponse = RegisterQueueResponse(result = "success", queueId = "queue-new")
+        globalStore.resumeEventSync()
+        runCurrent()
+        gateway.blockedRegister.complete(RegisterQueueResponse(result = "success", queueId = "queue-stale"))
+        runCurrent()
+
+        assertEquals(3, gateway.registerCallCount)
+        assertEquals("queue-new", store.queueId)
+        assertEquals(listOf("queue-old", "queue-new"), gateway.eventsCalls)
+        store.client.close()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun shortResumeWhileReregisterIsInFlightDoesNotPollTheOldQueue() = runTest {
+        var clock = 0L
+        val gateway = FakeGlobalGateway()
+        gateway.nextRegisterResponse = RegisterQueueResponse(result = "success", queueId = "queue-old")
+        val globalStore = newGlobalStore(gateway, backgroundScope) { clock }
+        val store = globalStore.switchAccount(2L).getOrThrow()
+        runCurrent()
+
+        gateway.blockOnCall = 2
+        globalStore.pauseEventSync()
+        clock += EVENT_SYNC_REREGISTER_AFTER_PAUSE_MILLIS
+        globalStore.resumeEventSync()
+        runCurrent()
+
+        globalStore.resumeEventSync()
+        runCurrent()
+        assertEquals(listOf("queue-old"), gateway.eventsCalls)
+
+        gateway.blockedRegister.complete(RegisterQueueResponse(result = "success", queueId = "queue-new"))
+        runCurrent()
+        assertEquals(2, gateway.registerCallCount)
+        assertEquals("queue-new", store.queueId)
+        assertEquals(listOf("queue-old", "queue-new"), gateway.eventsCalls)
         store.client.close()
     }
 
@@ -436,6 +647,19 @@ class GlobalStoreTest {
         )
     }
 
+    private fun newGlobalStore(
+        gateway: FakeGlobalGateway,
+        scope: CoroutineScope,
+        accounts: List<StoredZulipAccount> = listOf(fixtureAccount(id = 2L, email = "b@example.com")),
+        nowMillis: () -> Long = { now },
+    ): GlobalStore = GlobalStore(
+        accountRepository = FakeAccountStore(accounts),
+        cacheRepository = ZulipCacheRepository(FakeGlobalCacheDao(), nowMillis = { now }),
+        gateway = gateway,
+        scope = scope,
+        nowMillis = nowMillis,
+    )
+
     private fun fixtureAccount(id: Long, email: String) = StoredZulipAccount(
         id = id,
         realmUrl = "https://example.com",
@@ -521,6 +745,7 @@ private class FakeGlobalGateway : ZulipGateway {
     var blockOnCall = -1
     val blockedRegister = CompletableDeferred<RegisterQueueResponse>()
     var nextRegisterResponse = RegisterQueueResponse(result = "success", queueId = "queue-default")
+    var registerError: Throwable? = null
     val eventsCalls = mutableListOf<String>()
 
     override suspend fun register(client: ZulipClient, featureLevel: Int): RegisterQueueResponse {
@@ -528,6 +753,7 @@ private class FakeGlobalGateway : ZulipGateway {
         if (registerCallCount == blockOnCall) {
             return blockedRegister.await()
         }
+        registerError?.let { throw it }
         return nextRegisterResponse
     }
 
