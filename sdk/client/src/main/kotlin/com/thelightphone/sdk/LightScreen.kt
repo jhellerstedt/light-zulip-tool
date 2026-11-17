@@ -42,15 +42,6 @@ abstract class SimpleLightScreen<ResultType>(sealedActivity: SealedLightActivity
         activity.navigateTo(screen, resultCallback)
     }
 
-    /**
-     * Replaces the back stack with [screenFactory]'s screen. Result callbacks are not delivered,
-     * and this does not consult [com.thelightphone.sdk.LightViewModel.onBackPressed].
-     */
-    fun <T> resetTo(screenFactory: (SealedLightActivity) -> SimpleLightScreen<T>) {
-        val screen = screenFactory(SealedLightActivity(activity))
-        activity.resetTo(screen)
-    }
-
     open fun goBack(result: ResultType? = null) {
         this.result = result
         activity.goBack()

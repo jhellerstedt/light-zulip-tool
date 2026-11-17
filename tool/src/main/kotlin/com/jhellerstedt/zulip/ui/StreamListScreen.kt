@@ -44,6 +44,7 @@ class StreamListScreen(sealedActivity: SealedLightActivity) :
         val showAsterisk by ZulipServices.preferences(lightContext)
             .showNotificationAsterisk
             .collectAsState(initial = true)
+        ReturnHomeOnShow()
 
         LightTheme(colors = themeColors) {
             Column(
@@ -100,11 +101,7 @@ class StreamListScreen(sealedActivity: SealedLightActivity) :
                             onClick = { goBack() },
                             contentDescription = "Back",
                         ),
-                        homeBarButton(
-                            globalStore = ZulipServices.globalStore(lightContext),
-                            openMenu = { resetTo { ZulipHomeScreen(it) } },
-                            openRealmList = { resetTo { ChooseAccountScreen(it, false) } },
-                        ),
+                        homeBarButton(ZulipServices.globalStore(lightContext)),
                         null,
                     ),
                 )

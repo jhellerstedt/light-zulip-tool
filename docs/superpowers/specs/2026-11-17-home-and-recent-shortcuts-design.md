@@ -8,7 +8,7 @@ A HOME control in the bottom center returns to one place. With exactly one saved
 
 This design covers:
 
-- a stack reset on `LightActivity` and `SimpleLightScreen`
+- returning home with `goBack` and `navigateTo`, the navigation the published SDK allows the portal build to use
 - the HOME control on the browsing screens listed below
 - shortcut rows on `ZulipHomeScreen`
 - the account-count rule that picks the destination
@@ -34,27 +34,21 @@ fun homeDestination(accountCount: Int): HomeDestination
 | 1 | `ZulipHomeScreen` |
 | 0, 2, or more | `ChooseAccountScreen` constructed with `autoRestoreActiveAccount = false` |
 
-The count is `GlobalStore.listAccounts().size`, read on `Dispatchers.IO`. `resetTo` then runs on the main thread. A throw from that read uses `RealmList`.
+The count is `GlobalStore.listAccounts().size`, read on `Dispatchers.IO`. `openHome` then runs on the main thread. A throw from that read uses `RealmList`.
 
 HOME does not call `switchAccount` or `initialize`. It shows the menu for the account that is already active. If none is active, the menu uses the empty state it already has.
 
 ## Stack reset
 
-`SimpleLightScreen` gains `resetTo(screenFactory)`, matching `navigateTo`. It builds the next screen, then asks `LightActivity` to replace the stack.
+The portal compiles `tool/` against the published Light SDK and rejects reflection. That SDK exposes `navigateTo` and `goBack` only, so Home cannot replace the back stack.
 
-`LightActivity.resetTo`:
+With one saved realm, Home sets a return flag and goes back one screen. Each browsing screen above the menu sees the flag when it is shown and goes back again, until the Streams / Direct messages menu clears the flag. With any other count, Home opens the realm list on top and does not restore the last realm. Back from that list returns to the screen underneath it.
 
-1. The next screen already exists before any current screen is destroyed.
-2. Every back-stack entry, including the caller, is hidden and destroyed, and its `ViewModelStore` is cleared.
-3. Result callbacks are not invoked.
-4. The new screen is the only entry, then it is shown.
-5. The activity is not finished.
+`openHome` does not go through `LightViewModel.onBackPressed` beyond the normal `goBack` path. No view model in this tool consumes back.
 
-`resetTo` does not go through `LightViewModel.onBackPressed`.
+A second tap while a HOME navigation is in flight does nothing. A failed count read still continues into `openHome` for the realm list. The in-flight check ends when `openHome` runs, or when the screen's coroutine is cancelled before that.
 
-A second tap while a HOME navigation is in flight does nothing. A failed count read still continues into `resetTo` for the realm list. The in-flight check ends when `resetTo` runs, or when the screen's coroutine is cancelled before that.
-
-After HOME, Back from the landing screen leaves the app.
+After Home with one saved realm, Back from the menu follows the stack that was already under it.
 
 ## Where HOME appears
 
@@ -112,4 +106,4 @@ Titles and unread flags for direct messages match `DirectMessageListViewModel`: 
 - three direct-message conversations produce the first two, with the same titles and unread flags as the direct-message list
 - one saved account sets `showHome` false; two saved accounts set it true
 
-No instrumentation test is added for `LightActivity.resetTo`. The stack contract above is the behavior to implement.
+No instrumentation test is added for the walk back to the menu. The stack contract above is the behavior to implement.

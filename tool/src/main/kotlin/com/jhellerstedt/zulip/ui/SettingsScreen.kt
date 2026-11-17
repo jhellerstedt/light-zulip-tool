@@ -68,6 +68,7 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
                 ZulipServices.pokeNotificationAsterisk()
             }
         }
+        ReturnHomeOnShow()
 
         LaunchedEffect(state.navigateChooseAccount) {
             if (state.navigateChooseAccount) {
@@ -149,11 +150,7 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
                 LightBottomBar(
                     items = listOf(
                         null,
-                        homeBarButton(
-                            globalStore = ZulipServices.globalStore(lightContext),
-                            openMenu = { resetTo { ZulipHomeScreen(it) } },
-                            openRealmList = { resetTo { ChooseAccountScreen(it, false) } },
-                        ),
+                        homeBarButton(ZulipServices.globalStore(lightContext)),
                         null,
                     ),
                 )

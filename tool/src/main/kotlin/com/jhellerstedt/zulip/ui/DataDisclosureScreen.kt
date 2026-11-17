@@ -43,6 +43,7 @@ class DataDisclosureScreen(sealedActivity: SealedLightActivity) :
     @Composable
     override fun Content() {
         val themeColors by LightThemeController.colors.collectAsState()
+        ReturnHomeOnShow()
 
         LightTheme(colors = themeColors) {
             Column(
@@ -84,11 +85,7 @@ class DataDisclosureScreen(sealedActivity: SealedLightActivity) :
                 LightBottomBar(
                     items = listOf(
                         null,
-                        homeBarButton(
-                            globalStore = ZulipServices.globalStore(lightContext),
-                            openMenu = { resetTo { ZulipHomeScreen(it) } },
-                            openRealmList = { resetTo { ChooseAccountScreen(it, false) } },
-                        ),
+                        homeBarButton(ZulipServices.globalStore(lightContext)),
                         null,
                     ),
                 )

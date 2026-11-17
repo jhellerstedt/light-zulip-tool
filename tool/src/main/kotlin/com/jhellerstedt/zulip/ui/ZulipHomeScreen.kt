@@ -73,6 +73,7 @@ class ZulipHomeScreen(sealedActivity: SealedLightActivity) :
                 ZulipServices.pokeNotificationAsterisk()
             }
         }
+        ClearHomeReturn()
 
         LightTheme(colors = themeColors) {
             Box(
@@ -150,11 +151,7 @@ class ZulipHomeScreen(sealedActivity: SealedLightActivity) :
                                 contentDescription = "Settings",
                             ),
                             if (state.showHome) {
-                                homeBarButton(
-                                    globalStore = ZulipServices.globalStore(lightContext),
-                                    openMenu = { resetTo { ZulipHomeScreen(it) } },
-                                    openRealmList = { resetTo { ChooseAccountScreen(it, false) } },
-                                )
+                                homeBarButton(ZulipServices.globalStore(lightContext))
                             } else {
                                 null
                             },

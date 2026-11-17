@@ -68,6 +68,7 @@ class MessageListScreen(
         LaunchedEffect(narrow) {
             viewModel.loadMessages()
         }
+        ReturnHomeOnShow()
 
         LaunchedEffect(state.initialScrollIndex, scrollState.maxValue) {
             if (state.initialScrollIndex >= 0 && scrollState.maxValue > 0) {
@@ -146,11 +147,7 @@ class MessageListScreen(
                                 onClick = { goBack() },
                                 contentDescription = "Back",
                             ),
-                            homeBarButton(
-                                globalStore = ZulipServices.globalStore(lightContext),
-                                openMenu = { resetTo { ZulipHomeScreen(it) } },
-                                openRealmList = { resetTo { ChooseAccountScreen(it, false) } },
-                            ),
+                            homeBarButton(ZulipServices.globalStore(lightContext)),
                             LightBarButton.Text(
                                 text = "COMPOSE",
                                 onClick = { navigateTo(screenFactory = { ComposeScreen(it, narrow) }) },

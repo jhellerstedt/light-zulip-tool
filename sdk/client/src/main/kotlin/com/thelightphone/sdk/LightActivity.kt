@@ -87,20 +87,6 @@ class LightActivity internal constructor() : ComponentActivity() {
         current.deliverResult()
     }
 
-    internal fun resetTo(screen: SimpleLightScreen<*>) {
-        val previous = backStack.toList()
-        previous.forEach { entry ->
-            entry.screen.notifyWillHide()
-            entry.screen.destroy()
-            entry.viewModelStoreOwner.viewModelStore.clear()
-        }
-        backStack.clear()
-        val entry = BackStackEntry(screen)
-        backStack.add(entry)
-        screen.notifyWillShow()
-        currentScreen.value = entry
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen().setKeepOnScreenCondition {
             !contentReady || android.os.SystemClock.elapsedRealtime() - createdAt < 1000

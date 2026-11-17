@@ -168,11 +168,7 @@ class ChooseAccountScreen : LightScreen<Unit, ChooseAccountViewModel> {
                                 !state.navigateHome &&
                                 !state.navigateLogin
                             ) {
-                                homeBarButton(
-                                    globalStore = ZulipServices.globalStore(lightContext),
-                                    openMenu = { resetTo { ZulipHomeScreen(it) } },
-                                    openRealmList = { resetTo { ChooseAccountScreen(it, false) } },
-                                )
+                                homeBarButton(ZulipServices.globalStore(lightContext))
                             } else {
                                 null
                             },

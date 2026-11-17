@@ -58,6 +58,7 @@ class TopicListScreen(
         LaunchedEffect(streamId) {
             viewModel.loadTopics()
         }
+        ReturnHomeOnShow()
 
         LightTheme(colors = themeColors) {
             Box(
@@ -135,11 +136,7 @@ class TopicListScreen(
                                 onClick = { goBack() },
                                 contentDescription = "Back",
                             ),
-                            homeBarButton(
-                                globalStore = ZulipServices.globalStore(lightContext),
-                                openMenu = { resetTo { ZulipHomeScreen(it) } },
-                                openRealmList = { resetTo { ChooseAccountScreen(it, false) } },
-                            ),
+                            homeBarButton(ZulipServices.globalStore(lightContext)),
                             null,
                         ),
                     )
