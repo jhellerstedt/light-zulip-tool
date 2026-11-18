@@ -28,6 +28,25 @@ private object HomeReturn {
     var toMenu: Boolean = false
 }
 
+enum class AccountSwitchLanding {
+    NewMenu,
+    ExistingMenu,
+}
+
+/**
+ * Cold start pushes a new menu. Choosing a realm from the list opened on top of a
+ * conversation walks back to the menu already on the stack, so the previous realm's
+ * channel is not reloaded against the new realm.
+ */
+fun accountSwitchLanding(autoRestoreActiveAccount: Boolean): AccountSwitchLanding =
+    if (autoRestoreActiveAccount) AccountSwitchLanding.NewMenu else AccountSwitchLanding.ExistingMenu
+
+fun returningToMenu(): Boolean = HomeReturn.toMenu
+
+fun beginReturnToMenu() {
+    HomeReturn.toMenu = true
+}
+
 /**
  * The portal builds this tool against the published SDK, which only offers [SimpleLightScreen.navigateTo]
  * and [SimpleLightScreen.goBack]. One saved realm walks back to the menu already on the stack.

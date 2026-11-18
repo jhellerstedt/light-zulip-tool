@@ -67,10 +67,13 @@ class ChooseAccountScreen : LightScreen<Unit, ChooseAccountViewModel> {
         LaunchedEffect(state.navigateHome) {
             if (state.navigateHome) {
                 viewModel.consumeNavigateHome()
-                if (autoRestoreActiveAccount) {
-                    navigateTo(screenFactory = { ZulipHomeScreen(it) })
-                } else {
-                    goBack(Unit)
+                when (accountSwitchLanding(autoRestoreActiveAccount)) {
+                    AccountSwitchLanding.NewMenu ->
+                        navigateTo(screenFactory = { ZulipHomeScreen(it) })
+                    AccountSwitchLanding.ExistingMenu -> {
+                        beginReturnToMenu()
+                        goBack(Unit)
+                    }
                 }
             }
         }

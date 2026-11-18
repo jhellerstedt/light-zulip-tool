@@ -65,10 +65,12 @@ class MessageListScreen(
         val scrollState = rememberScrollState()
         var expandedPhoto by remember { mutableStateOf<ImageBitmap?>(null) }
 
-        LaunchedEffect(narrow) {
-            viewModel.loadMessages()
-        }
         ReturnHomeOnShow()
+        if (!returningToMenu()) {
+            LaunchedEffect(narrow) {
+                viewModel.loadMessages()
+            }
+        }
 
         LaunchedEffect(state.initialScrollIndex, scrollState.maxValue) {
             if (state.initialScrollIndex >= 0 && scrollState.maxValue > 0) {
@@ -148,9 +150,10 @@ class MessageListScreen(
                                 contentDescription = "Back",
                             ),
                             homeBarButton(ZulipServices.globalStore(lightContext)),
-                            LightBarButton.Text(
-                                text = "COMPOSE",
+                            LightBarButton.LightIcon(
+                                icon = LightIcons.COMPOSE_MESSAGE,
                                 onClick = { navigateTo(screenFactory = { ComposeScreen(it, narrow) }) },
+                                contentDescription = "Compose",
                             ),
                         ),
                     )

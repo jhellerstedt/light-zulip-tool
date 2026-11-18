@@ -55,10 +55,12 @@ class TopicListScreen(
             .showNotificationAsterisk
             .collectAsState(initial = true)
 
-        LaunchedEffect(streamId) {
-            viewModel.loadTopics()
-        }
         ReturnHomeOnShow()
+        if (!returningToMenu()) {
+            LaunchedEffect(streamId) {
+                viewModel.loadTopics()
+            }
+        }
 
         LightTheme(colors = themeColors) {
             Box(
