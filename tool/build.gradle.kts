@@ -1,9 +1,11 @@
+import java.io.File
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
+import java.util.Properties
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import javax.net.ssl.SSLContext
@@ -26,6 +28,26 @@ plugins {
 android {
     compileSdk = rootProject.ext["compileSdk"] as Int
 
+    // keystore.properties is local and gitignored. It names a keystore kept
+    // outside this repo. Release builds signed with that key update one
+    // another on a phone. Without the file, release falls back to the shared
+    // SDK dev key so a checkout still builds. The portal passes
+    // -DlightSdk.unsigned=true, which clears both configs before it signs.
+    val releaseKeystore = Properties().apply {
+        val file = rootProject.file("keystore.properties")
+        if (file.exists()) file.inputStream().use { load(it) }
+    }
+    val releaseStorePath = releaseKeystore.getProperty("storeFile")
+    val releaseStore = releaseStorePath?.let { path ->
+        val candidate = File(path)
+        if (candidate.isAbsolute) candidate else rootProject.file(path)
+    }
+    if (releaseStorePath != null && (releaseStore == null || !releaseStore.exists())) {
+        throw GradleException(
+            "keystore.properties names storeFile '$releaseStorePath', which does not exist",
+        )
+    }
+
     signingConfigs {
         create("lightsdkDev") {
             storeFile = file("../sdk/keys/lightsdk-dev.jks")
@@ -34,6 +56,16 @@ android {
             keyPassword = "android"
             enableV3Signing = true
             enableV4Signing = true
+        }
+        if (releaseStore != null) {
+            create("release") {
+                storeFile = releaseStore
+                storePassword = releaseKeystore.getProperty("storePassword")
+                keyAlias = releaseKeystore.getProperty("keyAlias")
+                keyPassword = releaseKeystore.getProperty("keyPassword")
+                enableV3Signing = true
+                enableV4Signing = true
+            }
         }
     }
 
@@ -49,7 +81,9 @@ android {
             signingConfig = signingConfigs.getByName("lightsdkDev")
         }
         release {
-            signingConfig = signingConfigs.getByName("lightsdkDev")
+            signingConfig = signingConfigs.getByName(
+                if (releaseStore != null) "release" else "lightsdkDev",
+            )
         }
     }
 

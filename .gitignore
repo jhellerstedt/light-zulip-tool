@@ -56,3 +56,4 @@ __pycache__/
 
 ### Signing keys ###
 /signer/keys/
+/keystore.properties
