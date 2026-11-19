@@ -199,6 +199,15 @@ class GlobalStore(
 
     fun listAccounts(): List<StoredZulipAccount> = accountRepository.getAllAccounts()
 
+    /** Realms other than the open one, whose saved conversations still have unread messages. */
+    suspend fun cachedUnreadAccountIds(excludingAccountId: Long? = null): Set<Long> =
+        withContext(Dispatchers.IO) {
+            accountRepository.getAllAccounts().mapNotNull { account ->
+                if (account.id == excludingAccountId) return@mapNotNull null
+                if (cacheRepository.hasUnread(account.id)) account.id else null
+            }.toSet()
+        }
+
     suspend fun switchAccount(accountId: Long): Result<ZulipStore> = switchMutex.withLock {
         runCatching { switchAccountLocked(accountId) }
     }

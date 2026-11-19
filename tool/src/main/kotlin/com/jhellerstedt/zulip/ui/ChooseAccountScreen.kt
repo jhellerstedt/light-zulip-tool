@@ -59,6 +59,9 @@ class ChooseAccountScreen : LightScreen<Unit, ChooseAccountViewModel> {
     override fun Content() {
         val themeColors by LightThemeController.colors.collectAsState()
         val state by viewModel.uiState.collectAsState()
+        val showAsterisk by ZulipServices.preferences(lightContext)
+            .showNotificationAsterisk
+            .collectAsState(initial = true)
 
         LaunchedEffect(Unit) {
             viewModel.initialize()
@@ -145,7 +148,10 @@ class ChooseAccountScreen : LightScreen<Unit, ChooseAccountViewModel> {
                                             .padding(vertical = 0.75f.gridUnitsAsDp()),
                                     ) {
                                         LightText(
-                                            text = account.realmName.ifBlank { account.realmUrl },
+                                            text = unreadLabel(
+                                                account.realmName.ifBlank { account.realmUrl },
+                                                showAsterisk && account.id in state.unreadAccountIds,
+                                            ),
                                             variant = LightTextVariant.Heading,
                                         )
                                         LightText(

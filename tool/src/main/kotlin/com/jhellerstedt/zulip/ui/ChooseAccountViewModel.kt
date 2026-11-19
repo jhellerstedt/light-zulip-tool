@@ -3,28 +3,44 @@ package com.jhellerstedt.zulip.ui
 import androidx.lifecycle.viewModelScope
 import com.jhellerstedt.zulip.data.StoredZulipAccount
 import com.jhellerstedt.zulip.store.GlobalStore
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 data class ChooseAccountUiState(
     val accounts: List<StoredZulipAccount> = emptyList(),
+    val unreadAccountIds: Set<Long> = emptySet(),
     val isLoading: Boolean = true,
     val navigateHome: Boolean = false,
     val navigateLogin: Boolean = false,
     val errorMessage: String? = null,
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ChooseAccountViewModel(
     private val globalStore: GlobalStore,
     private val autoRestoreActiveAccount: Boolean,
 ) : ZulipViewModel<Unit>(globalStore) {
     private val _uiState = MutableStateFlow(ChooseAccountUiState())
     val uiState: StateFlow<ChooseAccountUiState> = _uiState.asStateFlow()
+    private val unreadMutex = Mutex()
+
+    init {
+        viewModelScope.launch {
+            globalStore.activeStore
+                .flatMapLatest { store -> store?.unreadCounts ?: flowOf(emptyMap()) }
+                .collect { publishRealmUnread() }
+        }
+    }
 
     fun initialize() {
         viewModelScope.launch {
@@ -40,6 +56,7 @@ class ChooseAccountViewModel(
                 return@launch
             }
             _uiState.update { it.copy(accounts = accounts, isLoading = false) }
+            publishRealmUnread()
             if (!autoRestoreActiveAccount) {
                 return@launch
             }
@@ -87,5 +104,26 @@ class ChooseAccountViewModel(
 
     fun dismissError() {
         _uiState.update { it.copy(errorMessage = null) }
+    }
+
+    private suspend fun publishRealmUnread() {
+        unreadMutex.withLock {
+            val accounts = _uiState.value.accounts
+            if (accounts.isEmpty()) return
+            val activeId = globalStore.activeAccount.value?.id
+            val cachedUnreadAccountIds = globalStore.cachedUnreadAccountIds(excludingAccountId = activeId)
+            val activeUnreadCounts = globalStore.activeStore.value?.unreadCounts?.value.orEmpty()
+            val unreadAccountIds = accounts.mapNotNull { account ->
+                account.id.takeIf {
+                    realmHasUnread(
+                        accountId = account.id,
+                        activeAccountId = activeId,
+                        activeUnreadCounts = activeUnreadCounts,
+                        cachedUnreadAccountIds = cachedUnreadAccountIds,
+                    )
+                }
+            }.toSet()
+            _uiState.update { it.copy(unreadAccountIds = unreadAccountIds) }
+        }
     }
 }

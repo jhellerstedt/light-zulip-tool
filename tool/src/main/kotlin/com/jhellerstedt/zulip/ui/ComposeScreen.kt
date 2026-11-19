@@ -17,10 +17,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.delete
@@ -39,6 +41,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -63,6 +66,7 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
+import com.thelightphone.sdk.ui.LightScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTheme
@@ -517,44 +521,78 @@ private fun ComposeMessageEditor(
     modifier: Modifier = Modifier,
 ) {
     var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
-    Box(
+    var viewportHeightPx by remember { mutableIntStateOf(0) }
+    val scrollState = rememberScrollState()
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val cursorPaddingPx = with(density) { 0.5f.gridUnitsAsDp().toPx() }
+    val cursor = state.selection.min
+    val editorText = state.text.toString()
+
+    LaunchedEffect(editorText, cursor, textLayout, viewportHeightPx, scrollState.maxValue, cursorPaddingPx) {
+        val layout = textLayout ?: return@LaunchedEffect
+        if (viewportHeightPx <= 0) return@LaunchedEffect
+        val cursorPos = cursor.coerceIn(0, layout.layoutInput.text.length)
+        val rect = layout.getCursorRect(cursorPos)
+        val target = scrollOffsetToRevealCursor(
+            scrollOffsetPx = scrollState.value,
+            viewportHeightPx = viewportHeightPx,
+            cursorTopPx = rect.top - cursorPaddingPx,
+            cursorBottomPx = rect.bottom + cursorPaddingPx,
+            maxScrollPx = scrollState.maxValue,
+        )
+        if (target != scrollState.value) {
+            scrollState.scrollTo(target)
+        }
+    }
+
+    LightScrollView(
         modifier = modifier
-            .padding(horizontal = 2f.gridUnitsAsDp())
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    textLayout?.let { layout ->
-                        state.edit {
-                            selection = TextRange(layout.getOffsetForPosition(down.position))
-                        }
-                    }
-                    drag(down.id) { change ->
+            .onSizeChanged { viewportHeightPx = it.height }
+            .padding(horizontal = 2f.gridUnitsAsDp()),
+        scrollState = scrollState,
+        // Dragging the text moves the caret. The bar and the follow scroll move the message.
+        userScrollEnabled = false,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = with(density) { viewportHeightPx.toDp() })
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
                         textLayout?.let { layout ->
                             state.edit {
-                                selection = TextRange(layout.getOffsetForPosition(change.position))
+                                selection = TextRange(layout.getOffsetForPosition(down.position))
                             }
                         }
-                        change.consume()
+                        drag(down.id) { change ->
+                            textLayout?.let { layout ->
+                                state.edit {
+                                    selection = TextRange(layout.getOffsetForPosition(change.position))
+                                }
+                            }
+                            change.consume()
+                        }
                     }
-                }
-            },
-    ) {
-        BasicText(
-            text = state.text.toString(),
-            style = composeInputTextStyle(),
-            onTextLayout = { textLayout = it },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        textLayout?.let { layout ->
-            val cursorPos = state.selection.min.coerceIn(0, layout.layoutInput.text.length)
-            val rect = layout.getCursorRect(cursorPos)
-            Box(
-                modifier = Modifier
-                    .offset { IntOffset(rect.left.toInt(), rect.top.toInt()) }
-                    .width(2.dp)
-                    .height(with(androidx.compose.ui.platform.LocalDensity.current) { rect.height.toDp() })
-                    .background(LightThemeTokens.colors.content),
+                },
+        ) {
+            BasicText(
+                text = editorText,
+                style = composeInputTextStyle(),
+                onTextLayout = { textLayout = it },
+                modifier = Modifier.fillMaxWidth(),
             )
+            textLayout?.let { layout ->
+                val cursorPos = cursor.coerceIn(0, layout.layoutInput.text.length)
+                val rect = layout.getCursorRect(cursorPos)
+                Box(
+                    modifier = Modifier
+                        .offset { IntOffset(rect.left.toInt(), rect.top.toInt()) }
+                        .width(2.dp)
+                        .height(with(density) { rect.height.toDp() })
+                        .background(LightThemeTokens.colors.content),
+                )
+            }
         }
     }
 }

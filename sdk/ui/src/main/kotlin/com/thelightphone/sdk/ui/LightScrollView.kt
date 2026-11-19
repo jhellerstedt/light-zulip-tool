@@ -98,6 +98,7 @@ fun LightScrollView(
     modifier: Modifier = Modifier,
     scrollBarPosition: LightScrollBarPosition = LightScrollBarPosition.Outside,
     scrollState: ScrollState = rememberScrollState(),
+    userScrollEnabled: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -119,7 +120,7 @@ fun LightScrollView(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(end = contentPaddingEnd.gridUnitsAsDp())
-                .verticalScroll(scrollState),
+                .verticalScroll(scrollState, enabled = userScrollEnabled),
             content = content,
         )
         if (showScrollBar) {
