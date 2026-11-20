@@ -144,31 +144,32 @@ suspend fun getMessages(
     return json.decodeFromString(body)
 }
 
+internal fun messageFormParams(narrow: Narrow, content: String): Map<String, String> = when (narrow) {
+    is Narrow.Topic -> mapOf(
+        "type" to "stream",
+        "to" to narrow.streamId.toString(),
+        "topic" to narrow.topic,
+        "content" to content,
+    )
+    is Narrow.Channel -> mapOf(
+        "type" to "stream",
+        "to" to narrow.streamId.toString(),
+        "topic" to "general",
+        "content" to content,
+    )
+    is Narrow.Dm -> mapOf(
+        "type" to "direct",
+        "to" to json.encodeToString(narrow.userIds),
+        "content" to content,
+    )
+}
+
 suspend fun sendMessage(
     client: ZulipClient,
     narrow: Narrow,
     content: String,
 ): SendMessageResponse {
-    val formParams = when (narrow) {
-        is Narrow.Topic -> mapOf(
-            "type" to "stream",
-            "to" to narrow.streamId.toString(),
-            "topic" to narrow.topic,
-            "content" to content,
-        )
-        is Narrow.Channel -> mapOf(
-            "type" to "stream",
-            "to" to narrow.streamId.toString(),
-            "topic" to "general",
-            "content" to content,
-        )
-        is Narrow.Dm -> mapOf(
-            "type" to "direct",
-            "to" to json.encodeToString(narrow.userIds),
-            "content" to content,
-        )
-    }
-    val body = client.post("messages", formParams = formParams)
+    val body = client.post("messages", formParams = messageFormParams(narrow, content))
     return json.decodeFromString(body)
 }
 

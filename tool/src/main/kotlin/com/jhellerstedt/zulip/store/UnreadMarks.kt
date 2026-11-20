@@ -1,7 +1,12 @@
 package com.jhellerstedt.zulip.store
 
 fun Map<String, Int>.hasStreamUnread(): Boolean =
-    any { (key, count) -> count > 0 && key.startsWith("stream:") }
+    any { (key, count) ->
+        count > 0 && when (narrowFromCacheKey(key)) {
+            is Narrow.Channel, is Narrow.Topic -> true
+            else -> false
+        }
+    }
 
 fun Map<String, Int>.hasDirectUnread(): Boolean =
     any { (key, count) -> count > 0 && key.startsWith("dm:") }

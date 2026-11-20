@@ -9,6 +9,13 @@ import kotlinx.serialization.json.put
 
 private val json = Json { ignoreUnknownKeys = true }
 
+/**
+ * Whole-stream narrows use `stream:{id}:`. General chat is the empty topic, so it
+ * needs a different key. The marker stays outside the topic text so a real topic
+ * cannot collide with it, and it is plain text so SQLite does not truncate it.
+ */
+private const val EMPTY_TOPIC_CACHE_PREFIX = "stream-empty-topic:"
+
 sealed class Narrow {
     abstract fun toJson(): String
     abstract fun displayTitle(streams: Map<Int, String>, users: Map<Int, String>): String
@@ -86,12 +93,20 @@ fun Narrow.normalized(): Narrow = when (this) {
 }
 
 fun Narrow.cacheKey(): String = when (val narrow = normalized()) {
-    is Narrow.Topic -> "stream:${narrow.streamId}:${narrow.topic}"
+    is Narrow.Topic -> if (narrow.topic.isEmpty()) {
+        "$EMPTY_TOPIC_CACHE_PREFIX${narrow.streamId}"
+    } else {
+        "stream:${narrow.streamId}:${narrow.topic}"
+    }
     is Narrow.Channel -> "stream:${narrow.streamId}:"
     is Narrow.Dm -> "dm:${narrow.userIds.joinToString(",")}"
 }
 
 fun narrowFromCacheKey(value: String): Narrow? = when {
+    value.startsWith(EMPTY_TOPIC_CACHE_PREFIX) -> {
+        val streamId = value.removePrefix(EMPTY_TOPIC_CACHE_PREFIX).toIntOrNull() ?: return null
+        Narrow.Topic(streamId, "")
+    }
     value.startsWith("stream:") -> {
         val parts = value.removePrefix("stream:").split(":", limit = 2)
         val streamId = parts.getOrNull(0)?.toIntOrNull() ?: return null

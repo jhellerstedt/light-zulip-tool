@@ -2,6 +2,7 @@ package com.jhellerstedt.zulip
 
 import com.jhellerstedt.zulip.api.ZulipApiException
 import com.jhellerstedt.zulip.api.ZulipClient
+import com.jhellerstedt.zulip.api.routes.messageFormParams
 import com.jhellerstedt.zulip.api.ZulipGateway
 import com.jhellerstedt.zulip.api.models.GetEventsResponse
 import com.jhellerstedt.zulip.api.models.GetMessagesResponse
@@ -18,6 +19,7 @@ import com.jhellerstedt.zulip.data.ZulipOutboxDao
 import com.jhellerstedt.zulip.data.ZulipOutboxRepository
 import com.jhellerstedt.zulip.store.Narrow
 import com.jhellerstedt.zulip.store.OutboxRunResult
+import com.jhellerstedt.zulip.store.cacheKey
 import com.jhellerstedt.zulip.store.PendingUploadAttachment
 import com.jhellerstedt.zulip.store.ZulipOutboxProcessor
 import kotlinx.coroutines.flow.Flow
@@ -91,6 +93,20 @@ class ZulipOutboxProcessorTest {
     }
 
     @Test
+    fun generalChatOutboxSendsTheEmptyTopic() = runTest {
+        val dao = ProcessorOutboxDao()
+        dao.add(message("one", narrowKey = Narrow.Topic(1, "").cacheKey()))
+        val gateway = RecordingGateway()
+        val client = ZulipClient("https://example.com", "user@example.com", "key")
+
+        assertEquals(OutboxRunResult.Success, processor(dao, gateway, client).process(accountId))
+
+        assertEquals(Narrow.Topic(1, ""), gateway.sentNarrow)
+        assertEquals("", messageFormParams(gateway.sentNarrow!!, "caption-one")["topic"])
+        client.close()
+    }
+
+    @Test
     fun sendTimeoutRequeuesWithoutClaimingDelivery() = runTest {
         val dao = ProcessorOutboxDao()
         dao.add(message("one"))
@@ -116,10 +132,14 @@ class ZulipOutboxProcessorTest {
         client = client,
     )
 
-    private fun message(id: String, createdAt: Long = 1) = PendingMessageEntity(
+    private fun message(
+        id: String,
+        createdAt: Long = 1,
+        narrowKey: String = "stream:1:topic",
+    ) = PendingMessageEntity(
         localId = id,
         accountId = accountId,
-        narrowKey = "stream:1:topic",
+        narrowKey = narrowKey,
         content = "caption-$id",
         state = OutboxMessageState.QUEUED,
         createdAt = createdAt,
@@ -224,6 +244,7 @@ private class RecordingGateway : ZulipGateway {
     val uploadFailures = mutableMapOf<String, Throwable>()
     val sendFailures = mutableMapOf<String, Throwable>()
     var sentContent = ""
+    var sentNarrow: Narrow? = null
 
     override suspend fun upload(client: ZulipClient, attachment: PendingUploadAttachment): UploadFileResponse {
         calls += "upload:${attachment.displayName}"
@@ -233,6 +254,7 @@ private class RecordingGateway : ZulipGateway {
 
     override suspend fun send(client: ZulipClient, narrow: Narrow, content: String): SendMessageResponse {
         calls += "send"
+        sentNarrow = narrow
         sentContent = content
         sendFailures.remove(content)?.let { throw it }
         return SendMessageResponse("success", id = 1)

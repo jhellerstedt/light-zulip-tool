@@ -23,8 +23,16 @@ class NarrowCacheKeyTest {
     }
 
     @Test
+    fun emptyTopicRoundTripsSeparatelyFromTheChannelNarrow() {
+        val generalChat = Narrow.Topic(4, "")
+
+        assertEquals(generalChat, narrowFromCacheKey(generalChat.cacheKey()))
+        assertEquals(Narrow.Channel(4), narrowFromCacheKey(Narrow.Channel(4).cacheKey()))
+    }
+
+    @Test
     fun malformedCacheKeysAreRejected() {
-        listOf("", "stream:", "stream:not-an-id:topic", "dm:", "other:1").forEach { key ->
+        listOf("", "stream:", "stream:not-an-id:topic", "stream-empty-topic:", "stream-empty-topic:nope", "dm:", "other:1").forEach { key ->
             assertNull(narrowFromCacheKey(key))
         }
     }
