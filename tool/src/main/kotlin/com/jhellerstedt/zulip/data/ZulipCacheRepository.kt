@@ -10,6 +10,7 @@ import com.jhellerstedt.zulip.store.InboxConversation
 import com.jhellerstedt.zulip.store.Narrow
 import com.jhellerstedt.zulip.store.cacheKey
 import com.jhellerstedt.zulip.store.narrowFromCacheKey
+import com.jhellerstedt.zulip.util.withReactionEvent
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
@@ -149,6 +150,7 @@ class ZulipCacheRepository(
                 }
             }
             "realm_user" -> persistRealmUserEvent(accountId, event, cachedAt)
+            "reaction" -> persistReactionEvent(accountId, event)
         }
         if (conversation != null) {
             val message = event.message
@@ -167,6 +169,25 @@ class ZulipCacheRepository(
             )
         }
         prune(accountId)
+    }
+
+    private suspend fun persistReactionEvent(accountId: Long, event: ZulipEvent) {
+        val messageId = event.messageId ?: return
+        val userId = event.userId ?: return
+        val emojiName = event.emojiName ?: return
+        val emojiCode = event.emojiCode ?: return
+        val op = event.op ?: return
+        val row = dao.messageById(accountId, messageId) ?: return
+        val message = runCatching { json.decodeFromString<ZulipMessage>(row.payloadJson) }.getOrNull() ?: return
+        val updated = message.withReactionEvent(
+            op = op,
+            userId = userId,
+            emojiName = emojiName,
+            emojiCode = emojiCode,
+            reactionType = event.reactionType ?: "unicode_emoji",
+        )
+        if (updated == message) return
+        dao.upsertMessages(listOf(row.copy(payloadJson = json.encodeToString(updated))))
     }
 
     /** Marks a cached message read in place and decrements its conversation's stored unread count. */

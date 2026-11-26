@@ -4,6 +4,7 @@ import com.jhellerstedt.zulip.api.ZulipClient
 import com.jhellerstedt.zulip.api.models.RecentPrivateConversation
 import com.jhellerstedt.zulip.api.models.RegisterQueueResponse
 import com.jhellerstedt.zulip.api.models.ZulipMessage
+import com.jhellerstedt.zulip.api.models.ZulipReaction
 import com.jhellerstedt.zulip.api.models.ZulipStream
 import com.jhellerstedt.zulip.api.models.ZulipTopic
 import com.jhellerstedt.zulip.api.models.ZulipUser
@@ -17,7 +18,11 @@ import com.jhellerstedt.zulip.data.CachedAccountSnapshot
 import com.jhellerstedt.zulip.data.StoredZulipAccount
 import com.jhellerstedt.zulip.ui.UploadedAttachmentLink
 import com.jhellerstedt.zulip.ui.buildComposeMessageBody
+import com.jhellerstedt.zulip.util.ReactionEmoji
 import com.jhellerstedt.zulip.util.presentMessageContent
+import com.jhellerstedt.zulip.util.replacingOwnReaction
+import com.jhellerstedt.zulip.util.withReactionEvent
+import com.jhellerstedt.zulip.util.withoutOwnReactions
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -82,6 +87,8 @@ class ZulipStore(
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     private val _connectionState = MutableStateFlow(ConnectionState.REFRESHING)
+    private val _messagesRevision = MutableStateFlow(0)
+    val messagesRevision: StateFlow<Int> = _messagesRevision.asStateFlow()
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
     fun setConnectionState(state: ConnectionState) {
@@ -240,6 +247,7 @@ class ZulipStore(
             "realm_user" -> {
                 handleRealmUserEvent(event)
             }
+            "reaction" -> applyReactionEvent(event)
             "heartbeat" -> Unit
         }
         if (event.type == "message") {
@@ -323,6 +331,25 @@ class ZulipStore(
 
     fun getMessagesFor(narrow: Narrow): List<ZulipMessage> =
         messagesByNarrow[narrow.cacheKey()].orEmpty()
+
+    fun reactionsFor(messageId: Int): List<ZulipReaction> =
+        messagesByNarrow.values.firstNotNullOfOrNull { messages ->
+            messages.firstOrNull { it.id == messageId }?.reactions
+        }.orEmpty()
+
+    fun replaceOwnReaction(messageId: Int, emoji: ReactionEmoji) {
+        val userId = account.userId
+        updateReactions(messageId) { it.replacingOwnReaction(userId, emoji) }
+    }
+
+    fun removeOwnReactions(messageId: Int) {
+        val userId = account.userId
+        updateReactions(messageId) { it.withoutOwnReactions(userId) }
+    }
+
+    fun restoreReactions(messageId: Int, reactions: List<ZulipReaction>) {
+        updateReactions(messageId) { it.copy(reactions = reactions) }
+    }
 
     fun streamName(streamId: Int): String? = streams[streamId]?.name
 
@@ -416,6 +443,38 @@ class ZulipStore(
                 unreadByNarrow[key] = (unreadByNarrow[key] ?: 0) + 1
             }
         }
+    }
+
+    private fun applyReactionEvent(event: com.jhellerstedt.zulip.api.models.ZulipEvent) {
+        val messageId = event.messageId ?: return
+        val userId = event.userId ?: return
+        val emojiName = event.emojiName ?: return
+        val emojiCode = event.emojiCode ?: return
+        val op = event.op ?: return
+        updateReactions(messageId) { message ->
+            message.withReactionEvent(
+                op = op,
+                userId = userId,
+                emojiName = emojiName,
+                emojiCode = emojiCode,
+                reactionType = event.reactionType ?: "unicode_emoji",
+            )
+        }
+    }
+
+    private fun updateReactions(messageId: Int, transform: (ZulipMessage) -> ZulipMessage) {
+        var changed = false
+        messagesByNarrow.values.forEach { messages ->
+            val index = messages.indexOfFirst { it.id == messageId }
+            if (index >= 0) {
+                val updated = transform(messages[index])
+                if (updated != messages[index]) {
+                    messages[index] = updated
+                    changed = true
+                }
+            }
+        }
+        if (changed) _messagesRevision.value += 1
     }
 
     private fun markMessageReadLocally(messageId: Int) {

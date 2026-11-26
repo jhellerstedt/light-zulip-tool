@@ -36,3 +36,14 @@ cp keystore.properties.example keystore.properties
 Fill in `storeFile` and the passwords. Installs signed with that key replace each other and keep the app's data. A portal APK is signed by Light, so moving between a local build and a portal build means uninstalling first.
 
 `scripts/store-build-check.sh` copies the tool onto a clean `upstream/main` SDK with Light's extractor and runs the portal Gradle command. The APK it writes is unsigned. SDK edits in this fork are included in `scripts/sideload.sh` and left out of the check, which is what the portal will do. `--offline` uses only the local Gradle cache. `--sdk-ref REF` checks another SDK commit. `--head` checks the last commit instead of the working tree.
+
+## Releases
+
+GitHub releases follow the other Light tools: a `v*` tag builds the release APK and attaches it to the release. Bump `versionCode` and `versionName` in `tool/lighttool.toml` first. The tag is `v` plus `versionName` (`versionName = "1.1.8"` → tag `v1.1.8`).
+
+```bash
+git tag v1.1.8
+git push origin v1.1.8
+```
+
+The workflow checks that the tag matches `versionName`, runs `:tool:test`, and uploads `zulip-1.1.8.apk`. Actions → Release APK can cut the same release from `main` without pushing a tag first. CI has no `keystore.properties`, so that APK is signed with the shared dev key and updates other dev-key installs. A Light portal build is still signed by Light.

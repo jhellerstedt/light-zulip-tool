@@ -4,11 +4,16 @@ import com.jhellerstedt.zulip.api.DefaultZulipGateway
 import com.jhellerstedt.zulip.api.ZulipApiException
 import com.jhellerstedt.zulip.api.ZulipClient
 import com.jhellerstedt.zulip.api.ZulipGateway
+import com.jhellerstedt.zulip.api.routes.addMessageReaction
+import com.jhellerstedt.zulip.api.routes.removeMessageReaction
 import com.jhellerstedt.zulip.data.OutboxSummary
 import com.jhellerstedt.zulip.data.StoredZulipAccount
 import com.jhellerstedt.zulip.data.ZulipAccountStore
 import com.jhellerstedt.zulip.data.ZulipCacheRepository
 import com.jhellerstedt.zulip.data.ZulipOutboxRepository
+import com.jhellerstedt.zulip.util.ReactionEmoji
+import com.jhellerstedt.zulip.util.matches
+import com.jhellerstedt.zulip.util.reactorId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -58,6 +63,16 @@ internal fun classifyEventPollFailure(error: Throwable): EventPollFailure {
 }
 
 internal const val EVENT_SYNC_REREGISTER_AFTER_PAUSE_MILLIS = 10 * 60 * 1000L
+
+private suspend fun ignoreExistingReaction(block: suspend () -> Unit) {
+    try {
+        block()
+    } catch (error: ZulipApiException.ApiError) {
+        val code = error.code?.uppercase()
+        if (code == "REACTION_ALREADY_EXISTS" || code == "REACTION_DOES_NOT_EXIST") return
+        throw error
+    }
+}
 
 class GlobalStore(
     private val accountRepository: ZulipAccountStore,
@@ -117,6 +132,60 @@ class GlobalStore(
     suspend fun refreshTopics(streamId: Int): Result<List<com.jhellerstedt.zulip.api.models.ZulipTopic>> {
         val store = requireNotNull(activeStore.value) { "No active account" }
         return coordinator.refreshTopics(store, streamId)
+    }
+
+    suspend fun setReaction(messageId: Int, emoji: ReactionEmoji): Result<Unit> {
+        val store = activeStore.value ?: return Result.failure(IllegalStateException("No active account"))
+        val previous = store.reactionsFor(messageId)
+        val ownId = store.account.userId
+        store.replaceOwnReaction(messageId, emoji)
+        return try {
+            for (old in previous.filter { it.reactorId() == ownId && !it.matches(emoji) }) {
+                ignoreExistingReaction {
+                    removeMessageReaction(store.client, messageId, old.emojiName, old.emojiCode, old.reactionType)
+                }
+            }
+            if (previous.none { it.reactorId() == ownId && it.matches(emoji) }) {
+                ignoreExistingReaction {
+                    addMessageReaction(store.client, messageId, emoji.name, emoji.code)
+                }
+            }
+            Result.success(Unit)
+        } catch (cancelled: CancellationException) {
+            store.restoreReactions(messageId, previous)
+            throw cancelled
+        } catch (error: Throwable) {
+            store.restoreReactions(messageId, previous)
+            Result.failure(error)
+        }
+    }
+
+    suspend fun removeOwnReaction(messageId: Int): Result<Unit> {
+        val store = activeStore.value ?: return Result.failure(IllegalStateException("No active account"))
+        val previous = store.reactionsFor(messageId)
+        val own = previous.filter { it.reactorId() == store.account.userId }
+        if (own.isEmpty()) return Result.success(Unit)
+        store.removeOwnReactions(messageId)
+        return try {
+            for (reaction in own) {
+                ignoreExistingReaction {
+                    removeMessageReaction(
+                        store.client,
+                        messageId,
+                        reaction.emojiName,
+                        reaction.emojiCode,
+                        reaction.reactionType,
+                    )
+                }
+            }
+            Result.success(Unit)
+        } catch (cancelled: CancellationException) {
+            store.restoreReactions(messageId, previous)
+            throw cancelled
+        } catch (error: Throwable) {
+            store.restoreReactions(messageId, previous)
+            Result.failure(error)
+        }
     }
 
     suspend fun markNarrowRead(narrow: Narrow) {

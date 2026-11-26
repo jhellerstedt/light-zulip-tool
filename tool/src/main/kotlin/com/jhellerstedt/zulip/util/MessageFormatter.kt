@@ -19,6 +19,11 @@ private val htmlAnchorOrImage = Regex(
     setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
 )
 private val htmlAttribute = Regex("""\b([A-Za-z_:][\w:.-]*)\s*=\s*["']([^"']*)["']""")
+private val httpUrl = Regex("""https?://[^\s<>"'()]+""", RegexOption.IGNORE_CASE)
+private val fileExtension = Regex(
+    """\.(?:pdf|zip|gz|tgz|tar|7z|rar|docx?|xlsx?|pptx?|txt|csv|rtf|mp3|m4a|wav|ogg|mp4|mov|webm|apk)(?:$|\?)""",
+    RegexOption.IGNORE_CASE,
+)
 
 sealed interface MessagePart {
     data class Text(val text: String) : MessagePart
@@ -39,15 +44,37 @@ fun resolveRealmContentUrl(realmUrl: String, url: String): String {
 
 fun presentMessageContent(content: String): String {
     val plain = stripHtml(content)
-    return markdownLink.replace(plain) { match ->
-        val name = match.groupValues[1].trim().ifBlank { "attachment" }
-        val url = match.groupValues[2].substringBefore('?')
-        if (imageSuffix.containsMatchIn(name) || imageSuffix.containsMatchIn(url)) {
-            "Photo: $name"
-        } else {
-            "File: $name"
-        }
-    }.trim()
+    return shortenUrls(
+        markdownLink.replace(plain) { match ->
+            val name = match.groupValues[1].trim().ifBlank { "attachment" }
+            val url = match.groupValues[2]
+            when {
+                imageSuffix.containsMatchIn(name) || imageSuffix.containsMatchIn(url.substringBefore('?')) ->
+                    "Photo: $name"
+                isFileAttachment(name, url) -> "File: $name"
+                else -> webUrlLabel(url) ?: "File: $name"
+            }
+        },
+    ).trim()
+}
+
+/** Host without a leading www, for a message that should read `URL: example.com`. */
+fun displayHost(url: String): String? {
+    val host = runCatching { java.net.URI(url.trim()).host }.getOrNull()?.lowercase() ?: return null
+    val domain = host.removePrefix("www.")
+    return domain.takeIf { it.isNotBlank() && '.' in it }
+}
+
+fun shortenUrls(text: String): String = httpUrl.replace(text) { match ->
+    val raw = match.value.trimEnd('.', ',', ';', ':', '!', '?')
+    val trailing = match.value.removePrefix(raw)
+    val host = displayHost(raw) ?: return@replace match.value
+    "URL: $host$trailing"
+}
+
+private fun webUrlLabel(url: String): String? {
+    val host = displayHost(url) ?: return null
+    return "URL: $host"
 }
 
 private fun markdownMessageParts(content: String): List<MessagePart> {
@@ -113,17 +140,25 @@ private fun htmlMessageParts(content: String): List<MessagePart> {
 }
 
 private fun appendPlainText(parts: MutableList<MessagePart>, raw: String) {
-    val text = stripHtml(raw)
+    val text = shortenUrls(stripHtml(raw))
     if (text.isNotBlank()) parts += MessagePart.Text(text)
 }
 
 private fun linkPart(name: String, url: String): MessagePart {
     val cleanName = name.trim().ifBlank { fileName(url) }.ifBlank { "attachment" }
-    return if (imageSuffix.containsMatchIn(cleanName) || imageSuffix.containsMatchIn(url.substringBefore('?'))) {
-        MessagePart.Photo(cleanName, url)
-    } else {
-        MessagePart.FileLink(cleanName, url)
+    return when {
+        imageSuffix.containsMatchIn(cleanName) || imageSuffix.containsMatchIn(url.substringBefore('?')) ->
+            MessagePart.Photo(cleanName, url)
+        isFileAttachment(cleanName, url) -> MessagePart.FileLink(cleanName, url)
+        else -> webUrlLabel(url)?.let { MessagePart.Text(it) } ?: MessagePart.FileLink(cleanName, url)
     }
+}
+
+private fun isFileAttachment(name: String, url: String): Boolean {
+    val path = url.substringBefore('?')
+    return path.contains("/user_uploads/") ||
+        fileExtension.containsMatchIn(name) ||
+        fileExtension.containsMatchIn(path)
 }
 
 private fun attribute(source: String, name: String): String? =

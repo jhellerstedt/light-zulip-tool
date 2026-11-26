@@ -139,6 +139,23 @@ data class ZulipMessage(
     @SerialName("sender_id") val senderId: Int? = null,
     val timestamp: Long = 0,
     val flags: List<String> = emptyList(),
+    val reactions: List<ZulipReaction> = emptyList(),
+)
+
+@Serializable
+data class ZulipReaction(
+    @SerialName("emoji_name") val emojiName: String = "",
+    @SerialName("emoji_code") val emojiCode: String = "",
+    @SerialName("reaction_type") val reactionType: String = "unicode_emoji",
+    @SerialName("user_id") val userId: Int = 0,
+    val user: ZulipReactionUser? = null,
+)
+
+@Serializable
+data class ZulipReactionUser(
+    @SerialName("full_name") val fullName: String = "",
+    val id: Int = 0,
+    @SerialName("user_id") val userId: Int = 0,
 )
 
 @Serializable
@@ -191,4 +208,9 @@ data class ZulipEvent(
     val flag: String? = null,
     val subscriptions: List<ZulipStream>? = null,
     val op: String? = null,
+    @SerialName("user_id") val userId: Int? = null,
+    @SerialName("message_id") val messageId: Int? = null,
+    @SerialName("emoji_name") val emojiName: String? = null,
+    @SerialName("emoji_code") val emojiCode: String? = null,
+    @SerialName("reaction_type") val reactionType: String? = null,
 )

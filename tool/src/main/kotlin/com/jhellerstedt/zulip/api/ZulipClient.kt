@@ -10,6 +10,7 @@ import io.ktor.client.request.basicAuth
 import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.forms.MultiPartFormDataContent
 import io.ktor.client.request.forms.formData
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -100,6 +101,31 @@ class ZulipClient(
                 setBody(FormDataContent(Parameters.build {
                     formParams.forEach { (key, value) -> append(key, value) }
                 }))
+            }
+        }
+        return parseResponse(response.status.value, responseBody(response))
+    }
+
+    suspend fun delete(
+        path: String,
+        params: Map<String, String> = emptyMap(),
+        authenticated: Boolean = isAuthenticated,
+    ): String {
+        val query = if (params.isEmpty()) {
+            ""
+        } else {
+            "?" + params.entries.joinToString("&") { (key, value) ->
+                "${encode(key)}=${encode(value)}"
+            }
+        }
+        val response = networkRequest {
+            client.delete("$apiBase/$path$query") {
+                if (authenticated) {
+                    requireNotNull(email)
+                    requireNotNull(apiKey)
+                    basicAuth(email, apiKey)
+                }
+                header(HttpHeaders.UserAgent, USER_AGENT)
             }
         }
         return parseResponse(response.status.value, responseBody(response))

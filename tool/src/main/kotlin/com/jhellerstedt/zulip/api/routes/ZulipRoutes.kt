@@ -51,7 +51,7 @@ suspend fun registerQueue(
 fun buildRegisterQueueFormParams(zulipFeatureLevel: Int): Map<String, String> {
     val params = mutableMapOf(
         "event_types" to json.encodeToString(
-            listOf("message", "subscription", "update_message_flags", "realm_user"),
+            listOf("message", "subscription", "update_message_flags", "realm_user", "reaction"),
         ),
         "fetch_event_types" to json.encodeToString(
             listOf(
@@ -187,6 +187,39 @@ suspend fun uploadFile(
         bytes = bytes,
     )
     return json.decodeFromString(body)
+}
+
+suspend fun addMessageReaction(
+    client: ZulipClient,
+    messageId: Int,
+    emojiName: String,
+    emojiCode: String,
+) {
+    client.post(
+        "messages/$messageId/reactions",
+        formParams = mapOf(
+            "emoji_name" to emojiName,
+            "emoji_code" to emojiCode,
+            "reaction_type" to "unicode_emoji",
+        ),
+    )
+}
+
+suspend fun removeMessageReaction(
+    client: ZulipClient,
+    messageId: Int,
+    emojiName: String,
+    emojiCode: String,
+    reactionType: String,
+) {
+    client.delete(
+        "messages/$messageId/reactions",
+        params = mapOf(
+            "emoji_name" to emojiName,
+            "emoji_code" to emojiCode,
+            "reaction_type" to reactionType.ifBlank { "unicode_emoji" },
+        ),
+    )
 }
 
 suspend fun markMessagesRead(

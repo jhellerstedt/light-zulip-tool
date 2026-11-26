@@ -84,6 +84,36 @@ class MessageFormatterTest {
     }
 
     @Test
+    fun messagePartsShortenWebUrlsToTheHost() {
+        assertEquals(
+            listOf(MessagePart.Text("URL: theconversation.com")),
+            messageParts(
+                "https://theconversation.com/jensen-huangs-controversial-return-to-nvidia-poses-the-question-whats-the-point-of-a-board-297386",
+            ),
+        )
+        assertEquals(
+            listOf(MessagePart.Text("See URL: example.com today")),
+            messageParts("See https://www.example.com/a/b today"),
+        )
+    }
+
+    @Test
+    fun presentMessageContentShortensBareAndLinkedUrls() {
+        assertEquals(
+            "URL: theconversation.com",
+            presentMessageContent("https://theconversation.com/some/article"),
+        )
+        assertEquals(
+            "URL: nytimes.com",
+            presentMessageContent("[the story](https://www.nytimes.com/2026/05/01/story.html)"),
+        )
+        assertEquals(
+            "File: notes.pdf",
+            presentMessageContent("[notes.pdf](https://chat.example.com/user_uploads/notes.pdf)"),
+        )
+    }
+
+    @Test
     fun resolveRealmContentUrlKeepsAbsoluteAndPrefixesRelative() {
         assertEquals(
             "https://chat.example.com/user_uploads/2/ab/pic.png",

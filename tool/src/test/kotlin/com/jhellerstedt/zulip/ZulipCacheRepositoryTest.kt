@@ -119,6 +119,33 @@ class ZulipCacheRepositoryTest {
     }
 
     @Test
+    fun reactionEventUpdatesTheCachedMessage() = runBlocking {
+        val dao = FakeCacheDao()
+        val repository = ZulipCacheRepository(dao, nowMillis = { now })
+        val accountId = 7L
+        val narrow = Narrow.Topic(4, "release")
+        dao.messageRows += CachedMessageEntity(accountId, 12, narrow.cacheKey(), Json.encodeToString(message(12)), now)
+
+        repository.applyEvent(
+            accountId,
+            ZulipEvent(
+                type = "reaction",
+                op = "add",
+                userId = 3,
+                messageId = 12,
+                emojiName = "heart",
+                emojiCode = "2764",
+                reactionType = "unicode_emoji",
+            ),
+            conversation = null,
+        )
+
+        val updated = Json.decodeFromString<ZulipMessage>(dao.messageRows.single().payloadJson)
+        assertEquals("2764", updated.reactions.single().emojiCode)
+        assertEquals(3, updated.reactions.single().userId)
+    }
+
+    @Test
     fun applyEventPersistsReadFlagAndDecrementsConversationUnreadCount() = runBlocking {
         val dao = FakeCacheDao()
         val repository = ZulipCacheRepository(dao, nowMillis = { now })

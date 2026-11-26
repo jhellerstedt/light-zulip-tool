@@ -2,6 +2,7 @@ package com.jhellerstedt.zulip.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,8 +17,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import com.thelightphone.sdk.LightScreen
@@ -39,8 +42,11 @@ import com.jhellerstedt.zulip.ZulipServices
 import com.jhellerstedt.zulip.store.ConnectionState
 import com.jhellerstedt.zulip.store.Narrow
 import com.jhellerstedt.zulip.util.MessagePart
+import com.jhellerstedt.zulip.util.ReactionEmoji
 import com.jhellerstedt.zulip.util.formatTimestamp
 import com.jhellerstedt.zulip.util.messageParts
+import com.jhellerstedt.zulip.util.reactionSummary
+import com.jhellerstedt.zulip.util.reactorId
 import com.jhellerstedt.zulip.util.resolveRealmContentUrl
 import android.graphics.BitmapFactory
 import androidx.compose.ui.graphics.asImageBitmap
@@ -64,6 +70,7 @@ class MessageListScreen(
         val state by viewModel.uiState.collectAsState()
         val scrollState = rememberScrollState()
         var expandedPhoto by remember { mutableStateOf<ImageBitmap?>(null) }
+        var contextMessageId by remember { mutableStateOf<Int?>(null) }
 
         ReturnHomeOnShow()
         if (!returningToMenu()) {
@@ -113,7 +120,14 @@ class MessageListScreen(
                     ) {
                         state.messages.forEach { message ->
                             Column(
-                                modifier = Modifier.padding(bottom = 1f.gridUnitsAsDp()),
+                                modifier = Modifier
+                                    .padding(bottom = 1f.gridUnitsAsDp())
+                                    .pointerInput(message.id) {
+                                        detectTapGestures(
+                                            onDoubleTap = { viewModel.toggleLike(message.id) },
+                                            onLongPress = { contextMessageId = message.id },
+                                        )
+                                    },
                             ) {
                                 val sender = state.authorNamesByMessageId[message.id] ?: "Unknown"
                                 LightText(
@@ -137,6 +151,20 @@ class MessageListScreen(
                                             onOpen = { expandedPhoto = it },
                                         )
                                     }
+                                }
+                                val reactions = reactionSummary(message, state.ownUserId, state.userNames)
+                                if (reactions.isNotEmpty()) {
+                                    LightText(
+                                        text = reactions,
+                                        variant = LightTextVariant.Superfine,
+                                        modifier = Modifier.padding(top = 0.25f.gridUnitsAsDp()),
+                                    )
+                                }
+                                if (state.reactionErrorMessageId == message.id) {
+                                    LightText(
+                                        text = "reaction failed",
+                                        variant = LightTextVariant.Superfine,
+                                    )
                                 }
                             }
                         }
@@ -169,6 +197,26 @@ class MessageListScreen(
                 expandedPhoto?.let { bitmap ->
                     ExpandedPhoto(bitmap = bitmap, onClose = { expandedPhoto = null })
                 }
+
+                val contextMessage = state.messages.firstOrNull { it.id == contextMessageId }
+                ReactionContextPanel(
+                    visible = contextMessage != null,
+                    hasOwnReaction = contextMessage?.reactions?.any { it.reactorId() == state.ownUserId } == true,
+                    onLike = {
+                        contextMessage?.let { viewModel.setReaction(it.id, ReactionEmoji.like) }
+                        contextMessageId = null
+                    },
+                    onReact = { emoji ->
+                        contextMessage?.let { viewModel.setReaction(it.id, emoji) }
+                        contextMessageId = null
+                    },
+                    onRemove = {
+                        contextMessage?.let { viewModel.removeReaction(it.id) }
+                        contextMessageId = null
+                    },
+                    onDismiss = { contextMessageId = null },
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
             }
         }
     }

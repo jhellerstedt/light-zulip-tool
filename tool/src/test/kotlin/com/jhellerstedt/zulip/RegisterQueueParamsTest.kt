@@ -46,6 +46,13 @@ class RegisterQueueParamsTest {
     }
 
     @Test
+    fun registerSubscribesToReactionEvents() {
+        val params = buildRegisterQueueFormParams(zulipFeatureLevel = 481)
+
+        assertTrue(params.getValue("event_types").contains("\"reaction\""))
+    }
+
+    @Test
     fun registerFetchRequestsRecentPrivateConversations() {
         val params = buildRegisterQueueFormParams(zulipFeatureLevel = 481)
 
